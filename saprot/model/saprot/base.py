@@ -172,80 +172,124 @@ class SaprotBaseModel(AbstractModel):
         # After LoRA model is initialized, add trainable parameters to optimizer)
         self.init_optimizers()
     
-    def initialize_model(self):
-        # Initialize tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(self.config_path)
-        
-        # Initialize different models according to task
-        config = AutoConfig.from_pretrained(self.config_path)
-        if self.extra_config:
-            for k, v in self.extra_config.items():
-                setattr(config, k, v)
-        
-        else:
-            self.extra_config = {}
-        
-        if self.task == 'classification':
-            # Note that self.num_labels should be set in child classes
-            if self.load_pretrained:
-                self.model = AutoModelForSequenceClassification.from_pretrained(
-                    self.config_path, num_labels=self.num_labels, **self.extra_config)
-            
-            else:
-                config.num_labels = self.num_labels
-                self.model = AutoModelForSequenceClassification.from_config(config)
-        
-        if self.task == 'token_classification':
-            # Note that self.num_labels should be set in child classes
-            if self.load_pretrained:
-                self.model = AutoModelForTokenClassification.from_pretrained(
-                    self.config_path, num_labels=self.num_labels, **self.extra_config)
-            
-            else:
-                config.num_labels = self.num_labels
-                self.model = AutoModelForTokenClassification.from_config(config)
-        
-        elif self.task == 'regression':
-            if self.load_pretrained:
-                self.model = AutoModelForSequenceClassification.from_pretrained(
-                    self.config_path, num_labels=1, **self.extra_config)
-            
-            else:
-                config.num_labels = 1
-                self.model = AutoModelForSequenceClassification.from_config(config)
-        
-        elif self.task == 'lm':
-            if self.load_pretrained:
-                self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
-            
-            else:
-                self.model = AutoModelForMaskedLM.from_config(config)
-        
-        elif self.task == 'base':
-            if self.load_pretrained:
-                self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
-            
-            else:
-                self.model = AutoModelForMaskedLM.from_config(config)
-            
-            if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
-                self.model.lm_head = None
-        
-        if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
-            # Remove contact head
-            self.model.esm.contact_head = None
-            
-            # Remove position embedding if the embedding type is ``rotary``
-            if config.position_embedding_type == "rotary":
-                self.model.esm.embeddings.position_embeddings = None
-            
-            # Set gradient checkpointing
-            self.model.esm.encoder.gradient_checkpointing = self.gradient_checkpointing
-        
-        # Freeze the backbone of the model
+def initialize_model(self):
+    """
+    Initialize backbone model according to base_model name (ESM2 / ESMC / ProtBert / etc).
+    """
+
+    # ==========================================================
+    # 1. New branch: detect and load EvolutionaryScale‑ESMC
+    # ==========================================================
+    if "esmc" in self.config_path.lower() or "evolutionaryscale" in self.config_path.lower():
+        print("[SaProtBaseModel] Detected ESMC backbone → using EvolutionaryScale SDK loader.")
+        from esm.models.esmc import ESMC
+        from esm.sdk.api import ESMProtein, LogitsConfig
+
+        # ESMC 不使用 Hugging Face tokenizer
+        self.tokenizer = None
+        # 加载 ESMC 模型，可根据需要换 "esmc_300m"
+        self.model = ESMC.from_pretrained("esmc_300m")
+
+        # 可选：冻结 backbone
         if self.freeze_backbone:
-            for param in self.model.esm.parameters():
+            for param in self.model.parameters():
                 param.requires_grad = False
+
+        # 存储 API 类备用（用于后续嵌入或 logits 推理）
+        self.esmc_api = {"ESMProtein": ESMProtein, "LogitsConfig": LogitsConfig}
+
+        # 开启 gradient checkpointing（如果需要）
+        if hasattr(self.model, "encoder"):
+            self.model.encoder.gradient_checkpointing = self.gradient_checkpointing
+
+        print("[SaProtBaseModel] ESMC backbone initialized successfully.")
+        return  # 直接返回，跳过 Hugging Face initialization
+    # ==========================================================
+    # 2. Original Hugging Face ESM/ProtBert Initialization
+    # ==========================================================
+    # Initialize tokenizer
+    self.tokenizer = AutoTokenizer.from_pretrained(self.config_path)
+    
+    # Initialize different models according to task
+    config = AutoConfig.from_pretrained(self.config_path)
+    if self.extra_config:
+        for k, v in self.extra_config.items():
+            setattr(config, k, v)
+    else:
+        self.extra_config = {}
+    
+    # ---------- Task branches ----------
+    if self.task == "classification":
+        # Note that self.num_labels should be set in child classes
+        if self.load_pretrained:
+            self.model = AutoModelForSequenceClassification.from_pretrained(
+                self.config_path, num_labels=self.num_labels, **self.extra_config
+            )
+        else:
+            config.num_labels = self.num_labels
+            self.model = AutoModelForSequenceClassification.from_config(config)
+
+    elif self.task == "token_classification":
+        if self.load_pretrained:
+            self.model = AutoModelForTokenClassification.from_pretrained(
+                self.config_path, num_labels=self.num_labels, **self.extra_config
+            )
+        else:
+            config.num_labels = self.num_labels
+            self.model = AutoModelForTokenClassification.from_config(config)
+
+    elif self.task == "regression":
+        if self.load_pretrained:
+            self.model = AutoModelForSequenceClassification.from_pretrained(
+                self.config_path, num_labels=1, **self.extra_config
+            )
+        else:
+            config.num_labels = 1
+            self.model = AutoModelForSequenceClassification.from_config(config)
+
+    elif self.task == "lm":
+        if self.load_pretrained:
+            self.model = AutoModelForMaskedLM.from_pretrained(
+                self.config_path, **self.extra_config
+            )
+        else:
+            self.model = AutoModelForMaskedLM.from_config(config)
+
+    elif self.task == "base":
+        if self.load_pretrained:
+            self.model = AutoModelForMaskedLM.from_pretrained(
+                self.config_path, **self.extra_config
+            )
+        else:
+            self.model = AutoModelForMaskedLM.from_config(config)
+
+        # 特殊情况: ESM 模型移除 lm_head
+        if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
+            self.model.lm_head = None
+
+    # ==========================================================
+    # 3. ESM‑specific structure adjustments
+    # ==========================================================
+    if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
+        # Remove contact head
+        if hasattr(self.model.esm, "contact_head"):
+            self.model.esm.contact_head = None
+        
+        # Remove position embedding if the embedding type is rotary
+        if getattr(config, "position_embedding_type", None) == "rotary":
+            if hasattr(self.model.esm.embeddings, "position_embeddings"):
+                self.model.esm.embeddings.position_embeddings = None
+        
+        # Set gradient checkpointing
+        if hasattr(self.model.esm, "encoder"):
+            self.model.esm.encoder.gradient_checkpointing = self.gradient_checkpointing
+
+    # ==========================================================
+    # 4. Optionally freeze backbone weights
+    # ==========================================================
+    if self.freeze_backbone and hasattr(self.model, "esm"):
+        for param in self.model.esm.parameters():
+            param.requires_grad = False
         
         # # Disable the pooling layer
         # backbone = getattr(self.model, "esm", self.model.bert)
