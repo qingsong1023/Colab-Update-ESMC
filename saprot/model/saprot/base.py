@@ -189,7 +189,7 @@ class SaprotBaseModel(AbstractModel):
             # ESMC 不使用 Hugging Face tokenizer
             self.tokenizer = None
             # 加载 ESMC 模型，可根据需要换 "esmc_300m"
-            self.model = ESMC.from_pretrained("esmc_300m")
+            self.model = ESMC.from_pretrained("EvolutionaryScale/esmc-300m-2024-12")
 
             # 可选：冻结 backbone
             if self.freeze_backbone:
