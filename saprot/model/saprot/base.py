@@ -186,25 +186,24 @@ class SaprotBaseModel(AbstractModel):
             from esm.models.esmc import ESMC
             from esm.sdk.api import ESMProtein, LogitsConfig
 
-            # ESMC 不使用 Hugging Face tokenizer
+            # 不使用 HF tokenizer
             self.tokenizer = None
-            # 加载 ESMC 模型，可根据需要换 "esmc_300m"
-            self.model = ESMC.from_pretrained("EvolutionaryScale/esmc-300m-2024-12")
 
-            # 可选：冻结 backbone
+            # 使用本地注册表键，而不是全名
+            self.model = ESMC.from_pretrained("esmc_300m")
+
+            # 继续原逻辑
             if self.freeze_backbone:
-                for param in self.model.parameters():
-                    param.requires_grad = False
+                for p in self.model.parameters():
+                    p.requires_grad = False
 
-            # 存储 API 类备用（用于后续嵌入或 logits 推理）
             self.esmc_api = {"ESMProtein": ESMProtein, "LogitsConfig": LogitsConfig}
 
-            # 开启 gradient checkpointing（如果需要）
             if hasattr(self.model, "encoder"):
                 self.model.encoder.gradient_checkpointing = self.gradient_checkpointing
 
             print("[SaProtBaseModel] ESMC backbone initialized successfully.")
-            return  # 直接返回，跳过 Hugging Face initialization
+            return
         # ==========================================================
         # 2. Original Hugging Face ESM/ProtBert Initialization
         # ==========================================================
