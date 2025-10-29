@@ -180,7 +180,8 @@ def initialize_model(self):
     # ==========================================================
     # 1. New branch: detect and load EvolutionaryScale‑ESMC
     # ==========================================================
-    if "esmc" in self.config_path.lower() or "evolutionaryscale" in self.config_path.lower():
+    cfg_path_str = str(self.config_path).lower()
+    if "esmc" in cfg_path_str or "evolutionaryscale" in cfg_path_str:
         print("[SaProtBaseModel] Detected ESMC backbone → using EvolutionaryScale SDK loader.")
         from esm.models.esmc import ESMC
         from esm.sdk.api import ESMProtein, LogitsConfig
