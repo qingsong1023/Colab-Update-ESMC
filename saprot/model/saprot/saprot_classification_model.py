@@ -25,7 +25,9 @@ class SaprotClassificationModel(SaprotBaseModel):
         if coords is not None:
             inputs = self.add_bias_feature(inputs, coords)
 
-        # If backbone is frozen, the embedding will be the average of all residues
+        # ---------------------------------------------
+        # 1️如果冻结 backbone ：直接取 embedding 平均值
+        # ---------------------------------------------
         if self.freeze_backbone:
             repr = torch.stack(self.get_hidden_states_from_dict(inputs, reduction="mean"))
             x = self.model.classifier.dropout(repr)
@@ -33,10 +35,36 @@ class SaprotClassificationModel(SaprotBaseModel):
             x = torch.tanh(x)
             x = self.model.classifier.dropout(x)
             logits = self.model.classifier.out_proj(x)
+            return logits
 
-        else:
-            logits = self.model(**inputs).logits
-        
+        # ---------------------------------------------
+        # 2️检测模型类型
+        # ---------------------------------------------
+        # ESMC 分支
+        if isinstance(getattr(self, "model", None), object) and (
+            "ESMC" in self.model.__class__.__name__ or hasattr(self.model, "embed_dim")
+        ):
+            # 调用 EvolutionaryScale 的 forward 接口
+            # 通常输入为蛋白质序列的 token 序列、或 embeddings，取决于上游包装
+            from esm.sdk.api import LogitsConfig
+
+            logits_cfg = LogitsConfig(sequence=True)
+            outputs = self.model.forward(inputs, logits_cfg)
+            # outputs 是 dict，例如 {"logits": tensor, "probabilities": tensor, ...}
+            if isinstance(outputs, dict) and "logits" in outputs:
+                logits = outputs["logits"]
+            elif isinstance(outputs, torch.Tensor):
+                logits = outputs
+            else:
+                raise ValueError(f"Unexpected ESMC output type: {type(outputs)}")
+
+            return logits
+
+        # ---------------------------------------------
+        # 3️普通 HuggingFace 模型分支
+        # ---------------------------------------------
+        outputs = self.model(**inputs)
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs
         return logits
 
     def loss_func(self, stage, logits, labels):
