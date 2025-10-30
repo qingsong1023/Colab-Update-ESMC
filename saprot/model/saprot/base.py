@@ -297,12 +297,23 @@ class SaprotBaseModel(AbstractModel):
                 old_forward = self.model.forward
 
                 def wrapped_forward(*args, **kwargs):
+                    # Map typical Hugging Face naming -> ESMC expected arguments
+                    if "input_ids" in kwargs:
+                        # Old ESMC versions: argument name was "tokens"
+                        # New ESMC versions: argument name is "sequence_tokens"
+                        if "sequence_tokens" not in kwargs:
+                            kwargs["sequence_tokens"] = kwargs.pop("input_ids")
+                        else:
+                            kwargs.pop("input_ids")
+
+                    # Clean extra HF arguments ESMC doesn’t accept
                     for k in [
-                        "input_ids", "attention_mask", "token_type_ids", "position_ids", "labels",
+                        "attention_mask", "token_type_ids", "position_ids", "labels",
                         "inputs_embeds", "past_key_values", "use_cache",
-                        "output_attentions", "output_hidden_states", "return_dict", "sequences"
+                        "output_attentions", "output_hidden_states", "return_dict", "sequences",
                     ]:
                         kwargs.pop(k, None)
+
                     return old_forward(*args, **kwargs)
 
                 self.model.forward = wrapped_forward
