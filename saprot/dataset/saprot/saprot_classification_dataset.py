@@ -30,7 +30,11 @@ class SaprotClassificationDataset(LMDBDataset):
             **kwargs:
         """
         super().__init__(**kwargs)
-        self.tokenizer = EsmTokenizer.from_pretrained(tokenizer)
+        if tokenizer and ("esmc" not in str(tokenizer).lower()):
+            self.tokenizer = EsmTokenizer.from_pretrained(tokenizer)
+        else:
+            print("[SaProtClassificationDataset] Detected ESMC backbone — skipping EsmTokenizer loading.")
+            self.tokenizer = None
         self.max_length = max_length
         self.use_bias_feature = use_bias_feature
         self.preset_label = preset_label
