@@ -177,6 +177,23 @@ class SaprotBaseModel(AbstractModel):
         Initialize backbone model according to base_model name (ESM2 / ESMC / ProtBert / etc).
         """
 
+        # === Fix for EsmSequenceTokenizer missing setter ===
+        import transformers
+        from transformers import tokenization_utils_base
+
+        if not hasattr(tokenization_utils_base.PreTrainedTokenizerBase, "_patched_for_esmc"):
+            old_init = transformers.tokenization_utils_base.PreTrainedTokenizerBase.__init__
+
+            def patched_init(self_, *args, **kwargs):
+                # 屏蔽 transformers 对 cls_token 等属性的注入
+                for key in ["cls_token", "sep_token", "pad_token", "bos_token", "eos_token"]:
+                    if key in kwargs:
+                        kwargs.pop(key)
+                old_init(self_, *args, **kwargs)
+
+            transformers.tokenization_utils_base.PreTrainedTokenizerBase.__init__ = patched_init
+            tokenization_utils_base.PreTrainedTokenizerBase._patched_for_esmc = True
+
         # ==========================================================
         # 1. New branch: detect and load EvolutionaryScale‑ESMC
         # ==========================================================
