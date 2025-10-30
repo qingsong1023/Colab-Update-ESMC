@@ -73,22 +73,51 @@ class SaprotClassificationModel(SaprotBaseModel):
                     else:
                         print("[DEBUG] sequence_tokens already present in inputs")
 
-                # Print shape of the mapped sequence_tokens if available
+                # ==========================================================
+                # 🧩 Tokenization handling: handle raw string sequences here
+                # ==========================================================
                 if "sequence_tokens" in inputs:
+                    seqs = inputs["sequence_tokens"]
                     try:
-                        print(f"[DEBUG] sequence_tokens shape: {inputs['sequence_tokens'].shape}")
-                    except Exception as e:
-                        print(f"[WARN] Cannot get shape of sequence_tokens: {e}")
+                        print(f"[DEBUG] Type of sequence_tokens element: {type(seqs[0])}")
+                    except Exception:
+                        pass
 
-                    # 🔧 ensure sequence_tokens is torch.Tensor
-                    if isinstance(inputs["sequence_tokens"], list):
+                    # Case 1️⃣: already tensor -> do nothing
+                    if isinstance(seqs, torch.Tensor):
+                        print("[DEBUG] sequence_tokens already tensor, skipping conversion.")
+
+                    # Case 2️⃣: list of str -> tokenize using ESMC alphabet
+                    elif isinstance(seqs, list) and isinstance(seqs[0], str):
                         try:
-                            print("[DEBUG] sequence_tokens is list, converting to torch tensor (dtype=torch.long)")
-                            inputs["sequence_tokens"] = torch.tensor(inputs["sequence_tokens"], dtype=torch.long)
+                            print("[DEBUG] Detected raw string sequences, running ESMC alphabet batch_converter...")
+                            if hasattr(model_ref, "alphabet"):
+                                batch_converter = model_ref.alphabet.get_batch_converter()
+                                batch_data = [(f"seq{i}", s) for i, s in enumerate(seqs)]
+                                _, _, tokens = batch_converter(batch_data)
+                                print(f"[DEBUG] Alphabet batch_converter() success, tokens shape={tokens.shape}")
+                                inputs["sequence_tokens"] = tokens.to(self.device)
+                            else:
+                                raise ValueError("Model has no .alphabet to tokenize raw sequences.")
+                        except Exception as e:
+                            print(f"[ERROR] Failed to tokenize raw sequences: {e}")
+                            raise
+
+                    # Case 3️⃣: list of list[int] -> convert to tensor
+                    elif isinstance(seqs, list) and all(isinstance(x, (list, tuple)) for x in seqs):
+                        try:
+                            print("[DEBUG] sequence_tokens is nested list, converting to torch tensor (dtype=torch.long)")
+                            inputs["sequence_tokens"] = torch.tensor(seqs, dtype=torch.long)
                             print(f"[DEBUG] sequence_tokens converted shape: {inputs['sequence_tokens'].shape}")
                         except Exception as e:
-                            print(f"[ERROR] Failed to convert sequence_tokens to tensor: {e}")
+                            print(f"[ERROR] Failed to convert nested list to tensor: {e}")
+                            raise
+                    else:
+                        print(f"[WARN] Unexpected type for sequence_tokens: {type(seqs)}")
 
+                # ==========================================================
+                # Forward pass through ESMC
+                # ==========================================================
                 outputs = self.model(**inputs)
                 print("[DEBUG] Forwarded through ESMC successfully")
 
