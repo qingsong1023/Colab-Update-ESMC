@@ -252,19 +252,30 @@ class SaprotBaseModel(AbstractModel):
                     print("[Patch Warning] Could not find ESMTokenizer in any known location! Using DummyTokenizer instead.")
 
             # Attach tokenizer if found
-            if ESMTokenizer is not None:
+            try:
+                from esm.models.esmc import ESMC
+                from esm.pretrained import load_local_model
+
+                # 如果已经加载过 ESMC，则跳过
+                if not hasattr(self, "model") or not isinstance(self.model, ESMC):
+                    self.model = ESMC.from_pretrained("esmc_300m")
+
+                # 这里统一成 notebook 那边的 tokenizer 逻辑
                 try:
+                    from esm.sdk.api import ESMTokenizer
+                    print("[SaProtBaseModel] Using EvolutionaryScale ESMTokenizer (same as runnable notebook).")
                     self.model.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
                     self.tokenizer = self.model.tokenizer
-                except Exception as e:
-                    print(f"[Warning] Failed to load ESMTokenizer.from_pretrained: {e}. Using DummyTokenizer instead.")
-                    class DummyTokenizer:
-                        pad_token_id = 1
-                        eos_token_id = 2
-                        bos_token_id = 0
-                    self.model.tokenizer = DummyTokenizer()
+                except ImportError:
+                    # Fallback for older ESM versions
+                    print("[SaProtBaseModel] esm.sdk.api not found — trying esm.tokenizers.tokenizer.ESMTokenizer ...")
+                    from esm.tokenizers.tokenizer import ESMTokenizer
+                    self.model.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
                     self.tokenizer = self.model.tokenizer
-            else:
+
+                print("[SaProtBaseModel] tokenizer initialized successfully ✅")
+            except Exception as e:
+                print(f"[SaProtBaseModel::TokenizerFallback] Failed to init ESMTokenizer: {e}")
                 class DummyTokenizer:
                     pad_token_id = 1
                     eos_token_id = 2
