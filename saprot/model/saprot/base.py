@@ -209,9 +209,19 @@ class SaprotBaseModel(AbstractModel):
             print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
             from esm.models.esmc import ESMC
             from esm.sdk.api import ESMProtein, LogitsConfig
+            from types import SimpleNamespace
 
             self.tokenizer = None
             self.model = ESMC.from_pretrained("esmc_300m")
+
+            # ------------------------------------------------
+            if not hasattr(self.model, "config"):
+                self.model.config = SimpleNamespace(
+                    use_return_dict=True,
+                    hidden_size=getattr(self.model, "hidden_size", 1024),
+                )
+                print("[SaProtBaseModel] Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
+            # ------------------------------------------------
 
             if self.freeze_backbone:
                 for p in self.model.parameters():
