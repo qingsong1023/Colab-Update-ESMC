@@ -30,11 +30,16 @@ class SaprotClassificationDataset(LMDBDataset):
             **kwargs:
         """
         super().__init__(**kwargs)
-        if tokenizer and ("esmc" not in str(tokenizer).lower()):
-            self.tokenizer = EsmTokenizer.from_pretrained(tokenizer)
-        else:
+
+        # ==============================================================
+        # isolate ESMC model (do not load EsmTokenizer)
+        # ==============================================================
+        if tokenizer and ("esmc" in str(tokenizer).lower() or "evolutionaryscale" in str(tokenizer).lower()):
             print("[SaProtClassificationDataset] Detected ESMC backbone — skipping EsmTokenizer loading.")
             self.tokenizer = None
+        else:
+            self.tokenizer = EsmTokenizer.from_pretrained(tokenizer)
+
         self.max_length = max_length
         self.use_bias_feature = use_bias_feature
         self.preset_label = preset_label
@@ -45,7 +50,6 @@ class SaprotClassificationDataset(LMDBDataset):
     def __getitem__(self, index):
         entry = json.loads(self._get(index))
         seq = entry['seq']
-
 
         if self.tokenizer is None:
             tokens = list(seq)[:self.max_length]

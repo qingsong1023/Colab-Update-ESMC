@@ -201,14 +201,27 @@ class SaprotBaseModel(AbstractModel):
         """
         Initialize backbone model according to base_model name (ESM2 / ESMC / ProtBert / etc).
         """
+
         # ==========================================================
-        # 1. New branch: detect and load EvolutionaryScale ESMC
+        # (A) New branch: detect and load EvolutionaryScale ESMC
         # ==========================================================
         cfg_path_str = str(self.config_path).lower()
         is_esmc_model = "esmc" in cfg_path_str or "evolutionaryscale" in cfg_path_str
 
         if is_esmc_model:
             print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
+            # --- 仅在 ESMC 分支前打补丁，防止 transformers 属性冲突 ---
+            try:
+                import esm.tokenization.sequence_tokenizer as stn
+                tok_cls = getattr(stn, "EsmSequenceTokenizer", None)
+                if tok_cls is not None and isinstance(
+                    getattr(type(tok_cls), "cls_token", None), property
+                ):
+                    delattr(tok_cls, "cls_token")
+                    print("[Patch Applied] Removed EsmSequenceTokenizer.cls_token to fix ESMC conflict.")
+            except Exception as e:
+                print("[Patch Skipped] ESMC tokenizer patch failed:", e)
+
             from esm.models.esmc import ESMC
             from esm.sdk.api import ESMProtein, LogitsConfig
             from types import SimpleNamespace
@@ -216,7 +229,7 @@ class SaprotBaseModel(AbstractModel):
             self.tokenizer = None
             self.model = ESMC.from_pretrained("esmc_300m")
 
-            # ------------------------------------------------
+            # Compatible dummy config for LoRA / PEFT
             if not hasattr(self.model, "config"):
                 self.model.config = SimpleNamespace(
                     use_return_dict=True,
@@ -224,116 +237,113 @@ class SaprotBaseModel(AbstractModel):
                 )
                 print("[SaProtBaseModel] Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
 
-            # ------------------------------------------------
+            # Optional freeze backbone
             if self.freeze_backbone:
                 for p in self.model.parameters():
                     p.requires_grad = False
 
+            # Save EvolutionaryScale API
             self.esmc_api = {"ESMProtein": ESMProtein, "LogitsConfig": LogitsConfig}
 
+            # Gradient checkpointing compatibility
             if hasattr(self.model, "encoder"):
                 self.model.encoder.gradient_checkpointing = self.gradient_checkpointing
 
-            # ------------------------------------------------
+            # Forward-wrapper: filter HuggingFace-style kwargs
             if hasattr(self.model, "forward"):
                 old_forward = self.model.forward
 
                 def wrapped_forward(*args, **kwargs):
                     if "input_ids" in kwargs and "tokens" not in kwargs:
                         kwargs["tokens"] = kwargs.pop("input_ids")
-                    for k in ["attention_mask", "token_type_ids", "position_ids", "labels", "inputs_embeds", "past_key_values", "use_cache", "output_attentions", "output_hidden_states", "return_dict", "sequences"]:
+                    for k in [
+                        "attention_mask", "token_type_ids", "position_ids", "labels",
+                        "inputs_embeds", "past_key_values", "use_cache",
+                        "output_attentions", "output_hidden_states", "return_dict", "sequences"
+                    ]:
                         kwargs.pop(k, None)
                     return old_forward(*args, **kwargs)
 
                 self.model.forward = wrapped_forward
                 print("[Patch] Installed ESMC.forward adapter at top level (input_ids → tokens).")
-            # ------------------------------------------------
 
             print("[SaProtBaseModel] ESMC backbone initialized successfully.")
             return
 
+
         # ==========================================================
-        # 2. Original Hugging Face ESM/ProtBert Initialization
+        # 1. Initialize tokenizer
         # ==========================================================
-        # Initialize tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(self.config_path)
-        
+            
         # Initialize different models according to task
         config = AutoConfig.from_pretrained(self.config_path)
         if self.extra_config:
             for k, v in self.extra_config.items():
                 setattr(config, k, v)
+            
         else:
             self.extra_config = {}
-        
-        # ---------- Task branches ----------
-        if self.task == "classification":
+            
+        if self.task == 'classification':
             # Note that self.num_labels should be set in child classes
             if self.load_pretrained:
                 self.model = AutoModelForSequenceClassification.from_pretrained(
                     self.config_path, num_labels=self.num_labels, **self.extra_config)
-
+                
             else:
                 config.num_labels = self.num_labels
                 self.model = AutoModelForSequenceClassification.from_config(config)
-
-        elif self.task == "token_classification":
+            
+        if self.task == 'token_classification':
             # Note that self.num_labels should be set in child classes
             if self.load_pretrained:
                 self.model = AutoModelForTokenClassification.from_pretrained(
                     self.config_path, num_labels=self.num_labels, **self.extra_config)
-
+                
             else:
                 config.num_labels = self.num_labels
                 self.model = AutoModelForTokenClassification.from_config(config)
-
-        elif self.task == "regression":
+            
+        elif self.task == 'regression':
             if self.load_pretrained:
                 self.model = AutoModelForSequenceClassification.from_pretrained(
                     self.config_path, num_labels=1, **self.extra_config)
-
+                
             else:
                 config.num_labels = 1
                 self.model = AutoModelForSequenceClassification.from_config(config)
-
-        elif self.task == "lm":
+            
+        elif self.task == 'lm':
             if self.load_pretrained:
                 self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
-
+                
             else:
                 self.model = AutoModelForMaskedLM.from_config(config)
-
-        elif self.task == "base":
+            
+        elif self.task == 'base':
             if self.load_pretrained:
                 self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
-
+                
             else:
                 self.model = AutoModelForMaskedLM.from_config(config)
-
+                
             if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
                 self.model.lm_head = None
-
-        # ==========================================================
-        # 3. ESM specific structure adjustments
-        # ==========================================================
+            
         if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
             # Remove contact head
-            if hasattr(self.model.esm, "contact_head"):
-                self.model.esm.contact_head = None
-            
-            # Remove position embedding if the embedding type is rotary
-            if getattr(config, "position_embedding_type", None) == "rotary":
-                if hasattr(self.model.esm.embeddings, "position_embeddings"):
-                    self.model.esm.embeddings.position_embeddings = None
-            
+            self.model.esm.contact_head = None
+                
+            # Remove position embedding if the embedding type is ``rotary``
+            if config.position_embedding_type == "rotary":
+                self.model.esm.embeddings.position_embeddings = None
+                
             # Set gradient checkpointing
-            if hasattr(self.model.esm, "encoder"):
-                self.model.esm.encoder.gradient_checkpointing = self.gradient_checkpointing
-
-        # ==========================================================
-        # 4. Optionally freeze backbone weights
-        # ==========================================================
-        if self.freeze_backbone and hasattr(self.model, "esm"):
+            self.model.esm.encoder.gradient_checkpointing = self.gradient_checkpointing
+            
+        # Freeze the backbone of the model
+        if self.freeze_backbone:
             for param in self.model.esm.parameters():
                 param.requires_grad = False
         

@@ -22,29 +22,27 @@ class SaprotClassificationModel(SaprotBaseModel):
         return {f"{stage}_acc": torchmetrics.Accuracy()}
 
     def forward(self, inputs, coords=None):
-        is_esmc_model = False
-        model_ref = self.model
-
-        if model_ref.__class__.__name__.lower().startswith("esmc"):
-            is_esmc_model = True
-        elif hasattr(model_ref, "model") and model_ref.model.__class__.__name__.lower().startswith("esmc"):
-            is_esmc_model = True
-
-        if is_esmc_model:
-            if isinstance(inputs, dict):
-                if "input_ids" in inputs and "tokens" not in inputs:
-                    inputs["tokens"] = inputs.pop("input_ids")
-            outputs = self.model(**inputs)
-            return outputs
+        # ==============================================================
+        # isolate ESMC model
+        # ==============================================================
+        try:
+            model_ref = self.model
+            model_cls = model_ref.__class__.__name__.lower()
+            if model_cls.startswith("esmc") or "evolutionaryscale" in model_cls:
+                if isinstance(inputs, dict):
+                    if "input_ids" in inputs and "tokens" not in inputs:
+                        inputs["tokens"] = inputs.pop("input_ids")
+                outputs = self.model(**inputs)
+                if isinstance(outputs, dict) and "logits" in outputs:
+                    return outputs["logits"]
+                return outputs
+        except Exception as e:
+            print(f"[SaProtClassificationModel] ESMC forward isolation skipped: {e}")
 
         if coords is not None:
             inputs = self.add_bias_feature(inputs, coords)
-        outputs = self.model(inputs)
-        return outputs
 
-        # ---------------------------------------------
-        # 1️如果冻结 backbone ：直接取 embedding 平均值
-        # ---------------------------------------------
+        # If backbone is frozen, the embedding will be the average of all residues
         if self.freeze_backbone:
             repr = torch.stack(self.get_hidden_states_from_dict(inputs, reduction="mean"))
             x = self.model.classifier.dropout(repr)
@@ -52,36 +50,10 @@ class SaprotClassificationModel(SaprotBaseModel):
             x = torch.tanh(x)
             x = self.model.classifier.dropout(x)
             logits = self.model.classifier.out_proj(x)
-            return logits
 
-        # ---------------------------------------------
-        # 2️检测模型类型
-        # ---------------------------------------------
-        # ESMC 分支
-        if isinstance(getattr(self, "model", None), object) and (
-            "ESMC" in self.model.__class__.__name__ or hasattr(self.model, "embed_dim")
-        ):
-            # 调用 EvolutionaryScale 的 forward 接口
-            # 通常输入为蛋白质序列的 token 序列、或 embeddings，取决于上游包装
-            from esm.sdk.api import LogitsConfig
-
-            logits_cfg = LogitsConfig(sequence=True)
-            outputs = self.model.forward(inputs, logits_cfg)
-            # outputs 是 dict，例如 {"logits": tensor, "probabilities": tensor, ...}
-            if isinstance(outputs, dict) and "logits" in outputs:
-                logits = outputs["logits"]
-            elif isinstance(outputs, torch.Tensor):
-                logits = outputs
-            else:
-                raise ValueError(f"Unexpected ESMC output type: {type(outputs)}")
-
-            return logits
-
-        # ---------------------------------------------
-        # 3️普通 HuggingFace 模型分支
-        # ---------------------------------------------
-        outputs = self.model(**inputs)
-        logits = outputs.logits if hasattr(outputs, "logits") else outputs
+        else:
+            logits = self.model(**inputs).logits
+        
         return logits
 
     def loss_func(self, stage, logits, labels):
