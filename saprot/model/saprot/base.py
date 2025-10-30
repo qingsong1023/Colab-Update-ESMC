@@ -184,14 +184,23 @@ class SaprotBaseModel(AbstractModel):
                 old_forward = base_ref.forward
 
                 def wrapped_forward(*args, **kwargs):
-                    if "input_ids" in kwargs and "tokens" not in kwargs:
-                        kwargs["tokens"] = kwargs.pop("input_ids")
-                    for k in ["attention_mask", "token_type_ids", "position_ids", "labels", "inputs_embeds", "past_key_values", "use_cache", "output_attentions", "output_hidden_states", "return_dict", "sequences"]:
+                    # --- rename HuggingFace-style inputs to new ESMC API ---
+                    if "input_ids" in kwargs:
+                        if "sequence_tokens" not in kwargs:
+                            kwargs["sequence_tokens"] = kwargs.pop("input_ids")
+                        else:
+                            kwargs.pop("input_ids")
+                    # --- clean unsupported kwargs ---
+                    for k in [
+                        "attention_mask", "token_type_ids", "position_ids", "labels",
+                        "inputs_embeds", "past_key_values", "use_cache",
+                        "output_attentions", "output_hidden_states", "return_dict", "sequences",
+                    ]:
                         kwargs.pop(k, None)
                     return old_forward(*args, **kwargs)
 
                 base_ref.forward = wrapped_forward
-                print("[Patch] Installed ESMC.forward adapter inside PEFT base_model (LoRA).")
+                print("[Patch] Installed ESMC.forward adapter inside PEFT base_model (LoRA) [sequence_tokens patched].")
         # ------------------------------------------------
 
         # After LoRA model is initialized, add trainable parameters to optimizer)
