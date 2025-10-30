@@ -23,34 +23,76 @@ class SaprotClassificationModel(SaprotBaseModel):
 
     def forward(self, inputs, coords=None):
         # ==============================================================
-        # isolate ESMC model
+        # isolate ESMC model (handle LoRA / PEFT wrapping)
         # ==============================================================
         try:
+            print("\n================ DEBUG: forward() called ==================")
+            print(f"Initial model class: {self.model.__class__.__name__}")
+
             model_ref = self.model
-            model_cls = model_ref.__class__.__name__.lower()
-            if model_cls.startswith("esmc") or "evolutionaryscale" in model_cls:
+
+            # unwrap peft/adapter wrappers until we reach real backbone
+            unwrap_depth = 0
+            while hasattr(model_ref, "base_model") or hasattr(model_ref, "model"):
+                unwrap_depth += 1
+                if hasattr(model_ref, "base_model"):
+                    model_ref = model_ref.base_model
+                elif hasattr(model_ref, "model"):
+                    model_ref = model_ref.model
+                else:
+                    break
+                print(f"[DEBUG] Unwrapped level {unwrap_depth}: {model_ref.__class__.__name__}")
+
+            real_cls_name = model_ref.__class__.__name__.lower()
+            print(f"[DEBUG] Final detected inner model class: {real_cls_name}")
+            print(f"[DEBUG] Input keys before mapping: {list(inputs.keys())}")
+
+            # If inside is an ESMC / EvolutionaryScale-type model
+            if (
+                "esmc" in real_cls_name
+                or "evolutionaryscale" in real_cls_name
+            ):
                 if isinstance(inputs, dict):
-                    # ESMC expects "sequence_tokens" instead of "input_ids"
+                    # ensure tokens key exists
                     if "sequence_tokens" not in inputs:
-                        if "input_ids" in inputs:
+                        if "input_ids" in inputs and inputs["input_ids"] is not None:
+                            print("[DEBUG] Mapping input_ids -> sequence_tokens")
                             inputs["sequence_tokens"] = inputs.pop("input_ids")
-                        elif "tokens" in inputs:
+                        elif "tokens" in inputs and inputs["tokens"] is not None:
+                            print("[DEBUG] Mapping tokens -> sequence_tokens")
                             inputs["sequence_tokens"] = inputs.pop("tokens")
                         else:
+                            print(f"[ERROR] inputs keys={list(inputs.keys())}")
                             raise ValueError(
-                                "[SaProtClassificationModel] Missing required argument 'sequence_tokens' "
-                                f"(input keys: {list(inputs.keys())})"
+                                "[SaProtClassificationModel] Missing sequence_tokens (both input_ids and tokens are None)"
                             )
+                    else:
+                        print("[DEBUG] sequence_tokens already present in inputs")
+
+                # Print shape of the mapped sequence_tokens if available
+                if "sequence_tokens" in inputs:
+                    try:
+                        print(f"[DEBUG] sequence_tokens shape: {inputs['sequence_tokens'].shape}")
+                    except Exception as e:
+                        print(f"[WARN] Cannot get shape of sequence_tokens: {e}")
+
                 outputs = self.model(**inputs)
+                print("[DEBUG] Forwarded through ESMC successfully")
 
                 if isinstance(outputs, dict):
+                    print(f"[DEBUG] Output keys: {list(outputs.keys())}")
                     return outputs.get("logits", list(outputs.values())[0])
                 return outputs
+
+            else:
+                print("[DEBUG] Not an ESMC model, skipping remap")
+
         except Exception as e:
             print(f"[SaProtClassificationModel] ESMC forward isolation skipped: {e}")
+
         # ==============================================================
         # end isolate ESMC model
-        # ==============================================================           
+        # ==============================================================
 
         if coords is not None:
             inputs = self.add_bias_feature(inputs, coords)
