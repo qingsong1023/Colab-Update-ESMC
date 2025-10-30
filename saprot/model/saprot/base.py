@@ -178,19 +178,15 @@ class SaprotBaseModel(AbstractModel):
         self.model.print_trainable_parameters()
         
         # ------------------------------------------------
-        if hasattr(self.model, "base_model"):
-            base_ref = self.model.base_model
-            if base_ref.__class__.__name__.lower().startswith("esmc"):
-                old_forward = base_ref.forward
+        try:
+            base_ref = getattr(self.model, "base_model", None)
+            real_model = getattr(base_ref, "model", None) or getattr(base_ref, "base_model", None)
+            if real_model and real_model.__class__.__name__.lower().startswith("esmc"):
+                old_forward = real_model.forward
 
-                def wrapped_forward(*args, **kwargs):
-                    # --- rename HuggingFace-style inputs to new ESMC API ---
-                    if "input_ids" in kwargs:
-                        if "sequence_tokens" not in kwargs:
-                            kwargs["sequence_tokens"] = kwargs.pop("input_ids")
-                        else:
-                            kwargs.pop("input_ids")
-                    # --- clean unsupported kwargs ---
+                def safe_forward(*args, **kwargs):
+                    if "input_ids" in kwargs and "sequence_tokens" not in kwargs:
+                        kwargs["sequence_tokens"] = kwargs.pop("input_ids")
                     for k in [
                         "attention_mask", "token_type_ids", "position_ids", "labels",
                         "inputs_embeds", "past_key_values", "use_cache",
@@ -199,8 +195,12 @@ class SaprotBaseModel(AbstractModel):
                         kwargs.pop(k, None)
                     return old_forward(*args, **kwargs)
 
-                base_ref.forward = wrapped_forward
-                print("[Patch] Installed ESMC.forward adapter inside PEFT base_model (LoRA) [sequence_tokens patched].")
+                real_model.forward = safe_forward
+                print("[SafePatch] Applied fallback patch directly on ultimate ESMC model.")
+            else:
+                print("[SafePatch] No ESMC model detected — skipped.")
+        except Exception as e:
+            print(f"[SafePatch] Failed to install ultimate fallback patch: {e}")
         # ------------------------------------------------
 
         # After LoRA model is initialized, add trainable parameters to optimizer)
