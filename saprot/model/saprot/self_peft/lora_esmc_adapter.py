@@ -6,58 +6,32 @@ import torch
 from peft import LoraConfig, get_peft_model
 
 
-def apply_lora_to_esmc(
-    model,
-    r: int = 8,
-    alpha: int = 32,
-    dropout: float = 0.05,
-    bias: str = "none",
-    trainable: bool = True,
-    adapter_name: str = "default",
-):
+def apply_lora_to_esmc(model, lora_kwargs, num_lora=1, is_trainable=False, config_list=None):
     """
-    Apply a LoRA adapter specifically for EvolutionaryScale's ESMC models.
-    Independent from Hugging Face AutoModel architecture no SafePatch needed.
-
-    Args:
-        model:          ESMC backbone instance (e.g., ESMC.from_pretrained("esmc_300m"))
-        r:              LoRA bottleneck dimension
-        alpha:          LoRA scaling parameter
-        dropout:        LoRA dropout probability
-        bias:           Bias option ('none' | 'all' | 'lora_only')
-        trainable:      Whether LoRA layers are trainable
-        adapter_name:   Name of the LoRA adapter
-
-    Returns:
-        The modified model with LoRA layers injected.
+    Apply LoRA to ESMC backbone (EvolutionaryScale models).
     """
-    print("[LoRA][ESMC] Injecting LoRA modules into ESMC...")
+    print("[lora_esmc_adapter] Injecting LoRA into ESMC model...")
 
-    # 1. Define target modules specific to the ESMC architecture
-    target_modules = [
-        "q_proj", "k_proj", "v_proj", "out_proj",  # Attention layers
-        "fc1", "fc2", "mlp"                        # Feed‑forward layers
-    ]
+    target_modules = ["q_proj", "k_proj", "v_proj", "out_proj", "fc1", "fc2", "mlp"]
+    
+    r = getattr(lora_kwargs, "r", 8)
+    lora_dropout = getattr(lora_kwargs, "lora_dropout", 0.1)
+    lora_alpha = getattr(lora_kwargs, "lora_alpha", 16)
 
-    # 2. Create a LoRA configuration
     lora_config = LoraConfig(
-        r=r,
-        lora_alpha=alpha,
-        lora_dropout=dropout,
-        bias=bias,
-        task_type="FEATURE_EXTRACTION",  # Suitable for representation models like ESMC
+        task_type="SEQ_CLS",
         target_modules=target_modules,
-        inference_mode=not trainable,
-        init_lora_weights="gaussian",
+        modules_to_save=["classifier"],
+        inference_mode=False,
+        r=r,
+        lora_dropout=lora_dropout,
+        lora_alpha=lora_alpha,
     )
 
-    # 3. Inject LoRA layers
-    model = get_peft_model(model, lora_config, adapter_name=adapter_name)
-
-    # 4. Show summary
+    model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
-    print(f"[LoRA][ESMC] LoRA injection completed. Active adapter: {adapter_name}")
 
+    print("[lora_esmc_adapter] LoRA successfully applied to ESMC backbone.")
     return model
 
 
