@@ -264,10 +264,8 @@ class SaprotBaseModel(AbstractModel):
                 old_forward = self.model.forward
 
                 def wrapped_forward(*args, **kwargs):
-                    if "input_ids" in kwargs and "tokens" not in kwargs:
-                        kwargs["tokens"] = kwargs.pop("input_ids")
                     for k in [
-                        "attention_mask", "token_type_ids", "position_ids", "labels",
+                        "input_ids", "attention_mask", "token_type_ids", "position_ids", "labels",
                         "inputs_embeds", "past_key_values", "use_cache",
                         "output_attentions", "output_hidden_states", "return_dict", "sequences"
                     ]:
@@ -275,7 +273,7 @@ class SaprotBaseModel(AbstractModel):
                     return old_forward(*args, **kwargs)
 
                 self.model.forward = wrapped_forward
-                print("[Patch] Installed ESMC.forward adapter at top level (input_ids → tokens).")
+                print("[Patch] Installed ESMC.forward adapter at top level (cleaned kwargs only).")
 
             print("[SaProtBaseModel] ESMC backbone initialized successfully.")
             return
