@@ -30,14 +30,27 @@ class SaprotClassificationModel(SaprotBaseModel):
             model_cls = model_ref.__class__.__name__.lower()
             if model_cls.startswith("esmc") or "evolutionaryscale" in model_cls:
                 if isinstance(inputs, dict):
-                    if "input_ids" in inputs and "tokens" not in inputs:
-                        inputs["tokens"] = inputs.pop("input_ids")
+                    # ESMC expects "sequence_tokens" instead of "input_ids"
+                    if "sequence_tokens" not in inputs:
+                        if "input_ids" in inputs:
+                            inputs["sequence_tokens"] = inputs.pop("input_ids")
+                        elif "tokens" in inputs:
+                            inputs["sequence_tokens"] = inputs.pop("tokens")
+                        else:
+                            raise ValueError(
+                                "[SaProtClassificationModel] Missing required argument 'sequence_tokens' "
+                                f"(input keys: {list(inputs.keys())})"
+                            )
                 outputs = self.model(**inputs)
-                if isinstance(outputs, dict) and "logits" in outputs:
-                    return outputs["logits"]
+
+                if isinstance(outputs, dict):
+                    return outputs.get("logits", list(outputs.values())[0])
                 return outputs
         except Exception as e:
             print(f"[SaProtClassificationModel] ESMC forward isolation skipped: {e}")
+        # ==============================================================
+        # end isolate ESMC model
+        # ==============================================================           
 
         if coords is not None:
             inputs = self.add_bias_feature(inputs, coords)
