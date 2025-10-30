@@ -227,7 +227,7 @@ class SaprotBaseModel(AbstractModel):
             from types import SimpleNamespace
 
             self.tokenizer = None
-            self.model = ESMC.from_pretrained("esmc_300m")
+            self.model = ESMC.from_pretrained("esmc_300m", tokenizer=None)
 
             # Compatible dummy config for LoRA / PEFT
             if not hasattr(self.model, "config"):
