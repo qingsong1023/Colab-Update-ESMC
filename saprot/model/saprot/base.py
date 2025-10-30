@@ -186,7 +186,7 @@ class SaprotBaseModel(AbstractModel):
 
             def patched_init(self_, *args, **kwargs):
                 # 屏蔽 transformers 对 cls_token 等属性的注入
-                for key in ["cls_token", "sep_token", "pad_token", "bos_token", "eos_token"]:
+                for key in ["cls_token", "sep_token", "pad_token", "bos_token", "eos_token", "mask_token"]:
                     if key in kwargs:
                         kwargs.pop(key)
                 old_init(self_, *args, **kwargs)
