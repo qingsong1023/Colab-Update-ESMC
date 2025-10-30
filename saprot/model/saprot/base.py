@@ -240,13 +240,32 @@ class SaprotBaseModel(AbstractModel):
             # --- Patch 2: finally load model  ---
             self.model = ESMC.from_pretrained("esmc_300m")
 
-            from esm.tokenization import ESMTokenizer
+            # Try importing ESMTokenizer from multiple possible locations
+            ESMTokenizer = None
             try:
-                self.model.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
-                self.tokenizer = self.model.tokenizer
-                print("[Patch Applied] Manually attached ESMTokenizer to ESMC backbone.")
-            except Exception as e:
-                print("[Warning] Could not attach ESMTokenizer automatically, using dummy pad_token_id=1:", e)
+                from esm.sdk.api import ESMTokenizer
+                print("[Patch Applied] Using esm.sdk.api.ESMTokenizer")
+            except ImportError:
+                try:
+                    from esm.tokenizers.tokenizer import ESMTokenizer
+                    print("[Patch Applied] Using esm.tokenizers.tokenizer.ESMTokenizer")
+                except ImportError:
+                    print("[Patch Warning] Could not find ESMTokenizer in any known location! Using DummyTokenizer instead.")
+
+            # Attach tokenizer if found
+            if ESMTokenizer is not None:
+                try:
+                    self.model.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
+                    self.tokenizer = self.model.tokenizer
+                except Exception as e:
+                    print(f"[Warning] Failed to load ESMTokenizer.from_pretrained: {e}. Using DummyTokenizer instead.")
+                    class DummyTokenizer:
+                        pad_token_id = 1
+                        eos_token_id = 2
+                        bos_token_id = 0
+                    self.model.tokenizer = DummyTokenizer()
+                    self.tokenizer = self.model.tokenizer
+            else:
                 class DummyTokenizer:
                     pad_token_id = 1
                     eos_token_id = 2
