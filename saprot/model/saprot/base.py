@@ -102,9 +102,17 @@ class SaprotBaseModel(AbstractModel):
             
             # Initialize LoRA model for training
             else:
+                # --- detect if we're using ESMC backbone ---
+                cfg_path = str(getattr(self, "config_path", "")).lower()
+                if "esmc" in cfg_path or "evolutionaryscale" in cfg_path:
+                    print("[LoRA] Detected ESMC backbone: using ESMC specific target modules.")
+                    target_modules = ["q_proj", "k_proj", "v_proj", "out_proj", "fc1", "fc2", "mlp"]
+                else:
+                    target_modules = ["query", "key", "value", "intermediate.dense", "output.dense",]
+
                 lora_config = {
                     "task_type": "SEQ_CLS",
-                    "target_modules": ["query", "key", "value", "intermediate.dense", "output.dense"],
+                    "target_modules": target_modules,
                     "modules_to_save": ["classifier"],
                     "inference_mode": False,
                     "r": getattr(self.lora_kwargs, "r", 8),
@@ -176,16 +184,16 @@ class SaprotBaseModel(AbstractModel):
         """
         Initialize backbone model according to base_model name (ESM2 / ESMC / ProtBert / etc).
         """
+        # ==========================================================
+        # 1. New branch: detect and load EvolutionaryScale ESMC
+        # ==========================================================
+        cfg_path_str = str(self.config_path).lower()
+        is_esmc_model = "esmc" in cfg_path_str or "evolutionaryscale" in cfg_path_str
 
-        # === Fix for EsmSequenceTokenizer missing setter ===
-        import transformers
-        from transformers import tokenization_utils_base
-
-        if not hasattr(tokenization_utils_base.PreTrainedTokenizerBase, "_patched_for_esmc"):
+        if is_esmc_model and not hasattr(tokenization_utils_base.PreTrainedTokenizerBase, "_patched_for_esmc"):
             old_init = transformers.tokenization_utils_base.PreTrainedTokenizerBase.__init__
 
             def patched_init(self_, *args, **kwargs):
-                # 屏蔽 transformers 对 cls_token 等属性的注入
                 for key in ["cls_token", "sep_token", "pad_token", "bos_token", "eos_token", "mask_token"]:
                     if key in kwargs:
                         kwargs.pop(key)
@@ -194,22 +202,14 @@ class SaprotBaseModel(AbstractModel):
             transformers.tokenization_utils_base.PreTrainedTokenizerBase.__init__ = patched_init
             tokenization_utils_base.PreTrainedTokenizerBase._patched_for_esmc = True
 
-        # ==========================================================
-        # 1. New branch: detect and load EvolutionaryScale‑ESMC
-        # ==========================================================
-        cfg_path_str = str(self.config_path).lower()
-        if "esmc" in cfg_path_str or "evolutionaryscale" in cfg_path_str:
-            print("[SaProtBaseModel] Detected ESMC backbone → using EvolutionaryScale SDK loader.")
+        if is_esmc_model:
+            print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
             from esm.models.esmc import ESMC
             from esm.sdk.api import ESMProtein, LogitsConfig
 
-            # 不使用 HF tokenizer
             self.tokenizer = None
-
-            # 使用本地注册表键，而不是全名
             self.model = ESMC.from_pretrained("esmc_300m")
 
-            # 继续原逻辑
             if self.freeze_backbone:
                 for p in self.model.parameters():
                     p.requires_grad = False
@@ -221,6 +221,7 @@ class SaprotBaseModel(AbstractModel):
 
             print("[SaProtBaseModel] ESMC backbone initialized successfully.")
             return
+
         # ==========================================================
         # 2. Original Hugging Face ESM/ProtBert Initialization
         # ==========================================================
@@ -240,17 +241,18 @@ class SaprotBaseModel(AbstractModel):
             # Note that self.num_labels should be set in child classes
             if self.load_pretrained:
                 self.model = AutoModelForSequenceClassification.from_pretrained(
-                    self.config_path, num_labels=self.num_labels, **self.extra_config
-                )
+                    self.config_path, num_labels=self.num_labels, **self.extra_config)
+
             else:
                 config.num_labels = self.num_labels
                 self.model = AutoModelForSequenceClassification.from_config(config)
 
         elif self.task == "token_classification":
+            # Note that self.num_labels should be set in child classes
             if self.load_pretrained:
                 self.model = AutoModelForTokenClassification.from_pretrained(
-                    self.config_path, num_labels=self.num_labels, **self.extra_config
-                )
+                    self.config_path, num_labels=self.num_labels, **self.extra_config)
+
             else:
                 config.num_labels = self.num_labels
                 self.model = AutoModelForTokenClassification.from_config(config)
@@ -258,34 +260,31 @@ class SaprotBaseModel(AbstractModel):
         elif self.task == "regression":
             if self.load_pretrained:
                 self.model = AutoModelForSequenceClassification.from_pretrained(
-                    self.config_path, num_labels=1, **self.extra_config
-                )
+                    self.config_path, num_labels=1, **self.extra_config)
+
             else:
                 config.num_labels = 1
                 self.model = AutoModelForSequenceClassification.from_config(config)
 
         elif self.task == "lm":
             if self.load_pretrained:
-                self.model = AutoModelForMaskedLM.from_pretrained(
-                    self.config_path, **self.extra_config
-                )
+                self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
+
             else:
                 self.model = AutoModelForMaskedLM.from_config(config)
 
         elif self.task == "base":
             if self.load_pretrained:
-                self.model = AutoModelForMaskedLM.from_pretrained(
-                    self.config_path, **self.extra_config
-                )
+                self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
+
             else:
                 self.model = AutoModelForMaskedLM.from_config(config)
 
-            # 特殊情况: ESM 模型移除 lm_head
             if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
                 self.model.lm_head = None
 
         # ==========================================================
-        # 3. ESM‑specific structure adjustments
+        # 3. ESM specific structure adjustments
         # ==========================================================
         if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
             # Remove contact head
