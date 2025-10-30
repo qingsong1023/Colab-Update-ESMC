@@ -22,8 +22,25 @@ class SaprotClassificationModel(SaprotBaseModel):
         return {f"{stage}_acc": torchmetrics.Accuracy()}
 
     def forward(self, inputs, coords=None):
+        is_esmc_model = False
+        model_ref = self.model
+
+        if model_ref.__class__.__name__.lower().startswith("esmc"):
+            is_esmc_model = True
+        elif hasattr(model_ref, "model") and model_ref.model.__class__.__name__.lower().startswith("esmc"):
+            is_esmc_model = True
+
+        if is_esmc_model:
+            if isinstance(inputs, dict):
+                if "input_ids" in inputs and "tokens" not in inputs:
+                    inputs["tokens"] = inputs.pop("input_ids")
+            outputs = self.model(**inputs)
+            return outputs
+
         if coords is not None:
             inputs = self.add_bias_feature(inputs, coords)
+        outputs = self.model(inputs)
+        return outputs
 
         # ---------------------------------------------
         # 1️如果冻结 backbone ：直接取 embedding 平均值
