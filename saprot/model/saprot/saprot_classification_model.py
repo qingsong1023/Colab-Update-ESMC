@@ -30,7 +30,6 @@ class SaprotClassificationModel(SaprotBaseModel):
             print(f"Initial model class: {self.model.__class__.__name__}")
 
             model_ref = self.model
-
             # unwrap peft/adapter wrappers until we reach real backbone
             unwrap_depth = 0
             while hasattr(model_ref, "base_model") or hasattr(model_ref, "model"):
@@ -47,77 +46,24 @@ class SaprotClassificationModel(SaprotBaseModel):
             print(f"[DEBUG] Final detected inner model class: {real_cls_name}")
             print(f"[DEBUG] Input keys before mapping: {list(inputs.keys())}")
 
-            # If inside is an ESMC / EvolutionaryScale-type model
-            if (
-                "esmc" in real_cls_name
-                or "evolutionaryscale" in real_cls_name
-            ):
-                if isinstance(inputs, dict):
-                    # ensure tokens key exists
-                    if "sequence_tokens" not in inputs:
-                        if "input_ids" in inputs and inputs["input_ids"] is not None:
-                            print("[DEBUG] Mapping input_ids -> sequence_tokens")
-                            inputs["sequence_tokens"] = inputs.pop("input_ids")
-                        elif "tokens" in inputs and inputs["tokens"] is not None:
-                            print("[DEBUG] Mapping tokens -> sequence_tokens")
-                            inputs["sequence_tokens"] = inputs.pop("tokens")
-                        elif "sequences" in inputs and inputs["sequences"] is not None:
-                            print("[DEBUG] Mapping sequences -> sequence_tokens")
-                            inputs["sequence_tokens"] = inputs.pop("sequences")
-                        else:
-                            print(f"[ERROR] inputs keys={list(inputs.keys())}")
-                            raise ValueError(
-                                "[SaProtClassificationModel] Missing sequence_tokens "
-                                "(input_ids/tokens/sequences all missing or None)"
-                            )
-                    else:
-                        print("[DEBUG] sequence_tokens already present in inputs")
+            # ==============================================================
+            # ✅ 仅对 ESMC / EvolutionaryScale 类型模型进行隔离处理
+            # ==============================================================
+            if "esmc" in real_cls_name or "evolutionaryscale" in real_cls_name:
+                print("[DEBUG] Detected ESMC model — expecting tokenized Tensor input.")
 
-                # ==========================================================
-                # 🧩 Tokenization handling: handle raw string sequences here
-                # ==========================================================
-                if "sequence_tokens" in inputs:
-                    seqs = inputs["sequence_tokens"]
-                    try:
-                        print(f"[DEBUG] Type of sequence_tokens element: {type(seqs[0])}")
-                    except Exception:
-                        pass
+                # 只接受外部已经 token 化后的输入
+                if "input_ids" not in inputs and "sequence_tokens" not in inputs:
+                    raise ValueError(
+                        "[SaProtClassificationModel] ESMC forward expects tokenized tensor under 'input_ids' "
+                        "(please call esm_model.tokenizer() or alphabet.batch_converter() before forward)."
+                    )
 
-                    # Case 1️⃣: already tensor -> do nothing
-                    if isinstance(seqs, torch.Tensor):
-                        print("[DEBUG] sequence_tokens already tensor, skipping conversion.")
+                # 如果外部还使用了旧键 sequence_tokens，也兼容映射一下
+                if "sequence_tokens" not in inputs and "input_ids" in inputs:
+                    inputs["sequence_tokens"] = inputs["input_ids"]
 
-                    # Case 2️⃣: list of str -> tokenize using ESMC alphabet
-                    elif isinstance(seqs, list) and isinstance(seqs[0], str):
-                        try:
-                            print("[DEBUG] Detected raw string sequences, running ESMC alphabet batch_converter...")
-                            if hasattr(model_ref, "alphabet"):
-                                batch_converter = model_ref.alphabet.get_batch_converter()
-                                batch_data = [(f"seq{i}", s) for i, s in enumerate(seqs)]
-                                _, _, tokens = batch_converter(batch_data)
-                                print(f"[DEBUG] Alphabet batch_converter() success, tokens shape={tokens.shape}")
-                                inputs["sequence_tokens"] = tokens.to(self.device)
-                            else:
-                                raise ValueError("Model has no .alphabet to tokenize raw sequences.")
-                        except Exception as e:
-                            print(f"[ERROR] Failed to tokenize raw sequences: {e}")
-                            raise
-
-                    # Case 3️⃣: list of list[int] -> convert to tensor
-                    elif isinstance(seqs, list) and all(isinstance(x, (list, tuple)) for x in seqs):
-                        try:
-                            print("[DEBUG] sequence_tokens is nested list, converting to torch tensor (dtype=torch.long)")
-                            inputs["sequence_tokens"] = torch.tensor(seqs, dtype=torch.long)
-                            print(f"[DEBUG] sequence_tokens converted shape: {inputs['sequence_tokens'].shape}")
-                        except Exception as e:
-                            print(f"[ERROR] Failed to convert nested list to tensor: {e}")
-                            raise
-                    else:
-                        print(f"[WARN] Unexpected type for sequence_tokens: {type(seqs)}")
-
-                # ==========================================================
-                # Forward pass through ESMC
-                # ==========================================================
+                # -------------------- 模型真正 forward --------------------
                 outputs = self.model(**inputs)
                 print("[DEBUG] Forwarded through ESMC successfully")
 
@@ -126,8 +72,11 @@ class SaprotClassificationModel(SaprotBaseModel):
                     return outputs.get("logits", list(outputs.values())[0])
                 return outputs
 
+            # ==============================================================
+            # 📦 非 ESMC 模型：保持原有逻辑，不修改
+            # ==============================================================
             else:
-                print("[DEBUG] Not an ESMC model, skipping remap")
+                print("[DEBUG] Not an ESMC model, using default logic.")
 
         except Exception as e:
             print(f"[SaProtClassificationModel] ESMC forward isolation skipped: {e}")
@@ -135,7 +84,6 @@ class SaprotClassificationModel(SaprotBaseModel):
         # ==============================================================
         # end isolate ESMC model
         # ==============================================================
-
 
         if coords is not None:
             inputs = self.add_bias_feature(inputs, coords)
