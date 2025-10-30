@@ -204,23 +204,8 @@ class SaprotBaseModel(AbstractModel):
         # ==========================================================
         # 1. New branch: detect and load EvolutionaryScale ESMC
         # ==========================================================
-        import transformers
-        from transformers import tokenization_utils_base
-
         cfg_path_str = str(self.config_path).lower()
         is_esmc_model = "esmc" in cfg_path_str or "evolutionaryscale" in cfg_path_str
-
-        if is_esmc_model and not hasattr(tokenization_utils_base.PreTrainedTokenizerBase, "_patched_for_esmc"):
-            old_init = transformers.tokenization_utils_base.PreTrainedTokenizerBase.__init__
-
-            def patched_init(self_, *args, **kwargs):
-                for key in ["cls_token", "sep_token", "pad_token", "bos_token", "eos_token", "mask_token"]:
-                    if key in kwargs:
-                        kwargs.pop(key)
-                old_init(self_, *args, **kwargs)
-
-            transformers.tokenization_utils_base.PreTrainedTokenizerBase.__init__ = patched_init
-            tokenization_utils_base.PreTrainedTokenizerBase._patched_for_esmc = True
 
         if is_esmc_model:
             print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
