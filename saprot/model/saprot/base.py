@@ -240,6 +240,20 @@ class SaprotBaseModel(AbstractModel):
             # --- Patch 2: finally load model  ---
             self.model = ESMC.from_pretrained("esmc_300m")
 
+            from esm.tokenization import ESMTokenizer
+            try:
+                self.model.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
+                self.tokenizer = self.model.tokenizer
+                print("[Patch Applied] Manually attached ESMTokenizer to ESMC backbone.")
+            except Exception as e:
+                print("[Warning] Could not attach ESMTokenizer automatically, using dummy pad_token_id=1:", e)
+                class DummyTokenizer:
+                    pad_token_id = 1
+                    eos_token_id = 2
+                    bos_token_id = 0
+                self.model.tokenizer = DummyTokenizer()
+                self.tokenizer = self.model.tokenizer
+
             # --- Patch 3: restore typing for safety (optional) ---
             import esm.tokenization as esm_tok
             esm_tok.get_esmc_model_tokenizers = esm_tok.get_esmc_model_tokenizers  # safe no‑op
