@@ -61,10 +61,14 @@ class SaprotClassificationModel(SaprotBaseModel):
                         elif "tokens" in inputs and inputs["tokens"] is not None:
                             print("[DEBUG] Mapping tokens -> sequence_tokens")
                             inputs["sequence_tokens"] = inputs.pop("tokens")
+                        elif "sequences" in inputs and inputs["sequences"] is not None:
+                            print("[DEBUG] Mapping sequences -> sequence_tokens")
+                            inputs["sequence_tokens"] = inputs.pop("sequences")
                         else:
                             print(f"[ERROR] inputs keys={list(inputs.keys())}")
                             raise ValueError(
-                                "[SaProtClassificationModel] Missing sequence_tokens (both input_ids and tokens are None)"
+                                "[SaProtClassificationModel] Missing sequence_tokens "
+                                "(input_ids/tokens/sequences all missing or None)"
                             )
                     else:
                         print("[DEBUG] sequence_tokens already present in inputs")
@@ -93,6 +97,7 @@ class SaprotClassificationModel(SaprotBaseModel):
         # ==============================================================
         # end isolate ESMC model
         # ==============================================================
+
 
         if coords is not None:
             inputs = self.add_bias_feature(inputs, coords)
