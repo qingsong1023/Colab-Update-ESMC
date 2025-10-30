@@ -177,6 +177,21 @@ class SaprotBaseModel(AbstractModel):
         print(f"Now active LoRA model: {self.model.active_adapter}")
         self.model.print_trainable_parameters()
         
+        # ------------------------------------------------
+        if hasattr(self.model, "base_model"):
+            base_ref = self.model.base_model
+            if base_ref.__class__.__name__.lower().startswith("esmc"):
+                old_forward = base_ref.forward
+
+                def wrapped_forward(*args, **kwargs):
+                    if "input_ids" in kwargs and "tokens" not in kwargs:
+                        kwargs["tokens"] = kwargs.pop("input_ids")
+                    return old_forward(*args, **kwargs)
+
+                base_ref.forward = wrapped_forward
+                print("[Patch] Installed ESMC.forward adapter inside PEFT base_model (LoRA).")
+        # ------------------------------------------------
+
         # After LoRA model is initialized, add trainable parameters to optimizer)
         self.init_optimizers()
     
