@@ -241,12 +241,12 @@ class SaprotBaseModel(AbstractModel):
 
         if is_esmc_model:
             print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
-            try:
-                import esm.tokenization as esm_tok
-                esm_tok.get_esmc_model_tokenizers = lambda *a, **kw: None
-                print("[Patch Applied] Overrode esm.tokenization.get_esmc_model_tokenizers() to avoid tokenizer init.")
-            except Exception as e:
-                print("[Patch Failed] Could not override get_esmc_model_tokenizers:", e)
+            # try:
+                # import esm.tokenization as esm_tok
+                # esm_tok.get_esmc_model_tokenizers = lambda *a, **kw: None
+                # print("[Patch Applied] Overrode esm.tokenization.get_esmc_model_tokenizers() to avoid tokenizer init.")
+            # except Exception as e:
+                # print("[Patch Failed] Could not override get_esmc_model_tokenizers:", e)
 
             # (仍然保留 tokenizer patch)
             try:
