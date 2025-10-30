@@ -232,6 +232,19 @@ class SaprotBaseModel(AbstractModel):
             if hasattr(self.model, "encoder"):
                 self.model.encoder.gradient_checkpointing = self.gradient_checkpointing
 
+            # ------------------------------------------------
+            if hasattr(self.model, "forward"):
+                old_forward = self.model.forward
+
+                def wrapped_forward(*args, **kwargs):
+                    if "input_ids" in kwargs and "tokens" not in kwargs:
+                        kwargs["tokens"] = kwargs.pop("input_ids")
+                    return old_forward(*args, **kwargs)
+
+                self.model.forward = wrapped_forward
+                print("[Patch] Installed ESMC.forward adapter at top level (input_ids → tokens).")
+            # ------------------------------------------------
+
             print("[SaProtBaseModel] ESMC backbone initialized successfully.")
             return
 
