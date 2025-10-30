@@ -186,6 +186,8 @@ class SaprotBaseModel(AbstractModel):
                 def wrapped_forward(*args, **kwargs):
                     if "input_ids" in kwargs and "tokens" not in kwargs:
                         kwargs["tokens"] = kwargs.pop("input_ids")
+                    for k in ["attention_mask", "token_type_ids", "position_ids", "labels"]:
+                        kwargs.pop(k, None)
                     return old_forward(*args, **kwargs)
 
                 base_ref.forward = wrapped_forward
@@ -236,8 +238,8 @@ class SaprotBaseModel(AbstractModel):
                     hidden_size=getattr(self.model, "hidden_size", 1024),
                 )
                 print("[SaProtBaseModel] Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
-            # ------------------------------------------------
 
+            # ------------------------------------------------
             if self.freeze_backbone:
                 for p in self.model.parameters():
                     p.requires_grad = False
@@ -254,6 +256,8 @@ class SaprotBaseModel(AbstractModel):
                 def wrapped_forward(*args, **kwargs):
                     if "input_ids" in kwargs and "tokens" not in kwargs:
                         kwargs["tokens"] = kwargs.pop("input_ids")
+                    for k in ["attention_mask", "token_type_ids", "position_ids", "labels"]:
+                        kwargs.pop(k, None)
                     return old_forward(*args, **kwargs)
 
                 self.model.forward = wrapped_forward
