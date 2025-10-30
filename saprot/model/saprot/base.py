@@ -209,8 +209,6 @@ class SaprotBaseModel(AbstractModel):
 
         if is_esmc_model:
             print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
-
-            # --- Patch 1: disable get_esmc_model_tokenizers() globally  ---
             try:
                 import esm.tokenization as esm_tok
                 esm_tok.get_esmc_model_tokenizers = lambda *a, **kw: None
@@ -218,13 +216,11 @@ class SaprotBaseModel(AbstractModel):
             except Exception as e:
                 print("[Patch Failed] Could not override get_esmc_model_tokenizers:", e)
 
-            # --- (still keep old cls_token deletion patch ) ---
+            # (仍然保留 tokenizer patch)
             try:
                 import esm.tokenization.sequence_tokenizer as stn
                 tok_cls = getattr(stn, "EsmSequenceTokenizer", None)
-                if tok_cls is not None and isinstance(
-                    getattr(type(tok_cls), "cls_token", None), property
-                ):
+                if tok_cls is not None and isinstance(getattr(type(tok_cls), "cls_token", None), property):
                     delattr(tok_cls, "cls_token")
                     print("[Patch Applied] Removed EsmSequenceTokenizer.cls_token to fix ESMC conflict.")
             except Exception as e:
@@ -235,63 +231,29 @@ class SaprotBaseModel(AbstractModel):
             from types import SimpleNamespace
 
             self.tokenizer = None
-
-            # --- Patch 2: finally load model  ---
             self.model = ESMC.from_pretrained("esmc_300m")
 
-            # Try importing ESMTokenizer from multiple possible locations
-            ESMTokenizer = None
+            # ----✅ 修改的部分 start ----
             try:
-                from esm.sdk.api import ESMTokenizer
-                print("[Patch Applied] Using esm.sdk.api.ESMTokenizer")
-            except ImportError:
-                try:
-                    from esm.tokenizers.tokenizer import ESMTokenizer
-                    print("[Patch Applied] Using esm.tokenizers.tokenizer.ESMTokenizer")
-                except ImportError:
-                    print("[Patch Warning] Could not find ESMTokenizer in any known location! Using DummyTokenizer instead.")
-
-            # Attach tokenizer if found
-            try:
-                from esm.models.esmc import ESMC
-                from esm.pretrained import load_local_model
-
-                # 如果已经加载过 ESMC，则跳过
-                if not hasattr(self, "model") or not isinstance(self.model, ESMC):
-                    self.model = ESMC.from_pretrained("esmc_300m")
-
-                # 这里统一成 notebook 那边的 tokenizer 逻辑
-                try:
-                    from esm.sdk.api import ESMTokenizer
-                    print("[SaProtBaseModel] Using EvolutionaryScale ESMTokenizer (same as runnable notebook).")
-                    self.model.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
-                    self.tokenizer = self.model.tokenizer
-                except ImportError:
-                    # Fallback for older ESM versions
-                    print("[SaProtBaseModel] esm.sdk.api not found — trying esm.tokenizers.tokenizer.ESMTokenizer ...")
-                    from esm.tokenizers.tokenizer import ESMTokenizer
-                    self.model.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
-                    self.tokenizer = self.model.tokenizer
-
-                print("[SaProtBaseModel] tokenizer initialized successfully ✅")
-            except Exception as e:
-                print(f"[SaProtBaseModel::TokenizerFallback] Failed to init ESMTokenizer: {e}")
-                class DummyTokenizer:
-                    pad_token_id = 1
-                    eos_token_id = 2
-                    bos_token_id = 0
-                self.model.tokenizer = DummyTokenizer()
+                print("[SaProtBaseModel] Initializing tokenizer (notebook-style)...")
+                from esm import pretrained
+                local_model = pretrained.load_local_model("esmc_300m")
+                self.model.tokenizer = local_model.tokenizer
                 self.tokenizer = self.model.tokenizer
+                print(f"[SaProtBaseModel] Tokenizer type: {type(self.tokenizer)} ✅")
+            except Exception as e:
+                print(f"[SaProtBaseModel::TokenizerInitError] Failed to init ESMTokenizer: {e}")
+                self.tokenizer = None
+                self.model.tokenizer = None
+            # ----✅ 修改的部分 end ----
 
-            # --- Patch 3: restore typing for safety (optional) ---
+            # 后续逻辑完全不动
             import esm.tokenization as esm_tok
-            esm_tok.get_esmc_model_tokenizers = esm_tok.get_esmc_model_tokenizers  # safe no‑op
+            esm_tok.get_esmc_model_tokenizers = esm_tok.get_esmc_model_tokenizers
 
             if not hasattr(self.model, "config"):
-                self.model.config = SimpleNamespace(
-                    use_return_dict=True,
-                    hidden_size=getattr(self.model, "hidden_size", 1024),
-                )
+                self.model.config = SimpleNamespace(use_return_dict=True,
+                                                    hidden_size=getattr(self.model, "hidden_size", 1024))
                 print("[SaProtBaseModel] Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
 
             if self.freeze_backbone:
@@ -305,27 +267,19 @@ class SaprotBaseModel(AbstractModel):
 
             if hasattr(self.model, "forward"):
                 old_forward = self.model.forward
-
                 def wrapped_forward(*args, **kwargs):
-                    # Map typical Hugging Face naming -> ESMC expected arguments
                     if "input_ids" in kwargs:
-                        # Old ESMC versions: argument name was "tokens"
-                        # New ESMC versions: argument name is "sequence_tokens"
                         if "sequence_tokens" not in kwargs:
                             kwargs["sequence_tokens"] = kwargs.pop("input_ids")
                         else:
                             kwargs.pop("input_ids")
-
-                    # Clean extra HF arguments ESMC doesn’t accept
                     for k in [
                         "attention_mask", "token_type_ids", "position_ids", "labels",
                         "inputs_embeds", "past_key_values", "use_cache",
                         "output_attentions", "output_hidden_states", "return_dict", "sequences",
                     ]:
                         kwargs.pop(k, None)
-
                     return old_forward(*args, **kwargs)
-
                 self.model.forward = wrapped_forward
                 print("[Patch] Installed ESMC.forward adapter at top level (cleaned kwargs only).")
 
