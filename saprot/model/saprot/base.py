@@ -72,231 +72,326 @@ class SaprotBaseModel(AbstractModel):
         self.valid_metrics_list['step'] = []
     
     def _init_lora(self):
-        # --------------------------------------------------------
-        # [ESMC LoRA Isolation] — Added logic (leave the rest below intact)
-        # --------------------------------------------------------
-        cfg_path_lower = str(self.config_path).lower()
-        if "esmc" in cfg_path_lower or "evolutionaryscale" in cfg_path_lower:
-            from .self_peft.lora_esmc_adapter import apply_lora_to_esmc
-            print("[LoRA] Detected ESMC backbone — using isolated ESMC LoRA adapter.")
-
-            self.model = apply_lora_to_esmc(
-                self.model,
-                r=getattr(self.lora_kwargs, "r", 8),
-                alpha=getattr(self.lora_kwargs, "lora_alpha", 16),
-                dropout=getattr(self.lora_kwargs, "lora_dropout", 0.05),
-                trainable=getattr(self.lora_kwargs, "is_trainable", True),
-                adapter_name="default",
+            from peft import (
+                LoraConfig,
+                # PeftModelForSequenceClassification,
+                # get_peft_model
             )
-
-            # Initialize optimizer after adding LoRA
-            self.init_optimizers()
-            return
-        # --------------------------------------------------------
-
-        from peft import (
-            LoraConfig,
-            # PeftModelForSequenceClassification,
-            # get_peft_model
-        )
-        
-        from .self_peft.mapping import get_peft_model
-        from .self_peft.peft_model import PeftModelForSequenceClassification
-        
-        is_trainable = getattr(self.lora_kwargs, "is_trainable", False)
-        config_list = getattr(self.lora_kwargs, "config_list", [])
-        assert self.lora_kwargs.num_lora >= len(config_list), ("The number of LoRA models should be greater than or "
-                                                               "equal to the number of weight files.")
-        for i in range(self.lora_kwargs.num_lora):
-            adapter_name = f"adapter_{i}" if self.lora_kwargs.num_lora > 1 else "default"
             
-            # Load pre-trained LoRA weights
-            if i < len(config_list):
-                lora_config_path = config_list[i].lora_config_path
-                if i == 0:
-                    # If i == 0, initialize a PEFT model
-                    self.model = PeftModelForSequenceClassification.from_pretrained(self.model,
-                                                                                    lora_config_path,
-                                                                                    adapter_name=adapter_name,
-                                                                                    is_trainable=is_trainable)
-                else:
-                    self.model.load_adapter(lora_config_path, adapter_name=adapter_name, is_trainable=is_trainable)
+            from .self_peft.mapping import get_peft_model
+            from .self_peft.peft_model import PeftModelForSequenceClassification
             
-            # Initialize LoRA model for training
-            else:
-                lora_config = {
-                    "task_type": "SEQ_CLS",
-                    "target_modules": ["query", "key", "value", "intermediate.dense", "output.dense"],
-                    "modules_to_save": ["classifier"],
-                    "inference_mode": False,
-                    "r": getattr(self.lora_kwargs, "r", 8),
-                    "lora_dropout": getattr(self.lora_kwargs, "lora_dropout", 0.0),
-                    "lora_alpha": getattr(self.lora_kwargs, "lora_alpha", 16),
-                }
-                
-                lora_config = LoraConfig(**lora_config)
-                
-                if i == 0:
-                    # If i == 0, initialize a PEFT model
-                    self.model = get_peft_model(self.model, lora_config, adapter_name=adapter_name)
-                
-                else:
-                    self.model.add_adapter(adapter_name, lora_config)
-        
-        if self.lora_kwargs.num_lora > 1:
-            # Multiple LoRA models only support inference mode
-            print("Multiple LoRA models are used. This only supports inference mode. If you want to train the model,"
-                  "set num_lora to 1.")
+            is_trainable = getattr(self.lora_kwargs, "is_trainable", False)
+            config_list = getattr(self.lora_kwargs, "config_list", [])
+            assert self.lora_kwargs.num_lora >= len(config_list), ("The number of LoRA models should be greater than or "
+                                                                "equal to the number of weight files.")
             
-            # Replace the normal forward function with the lora ensemble function, which averages the outputs of all
-            # LoRA models.
-            def lora_forward(func):
+            # --- new: detect if esmc backbone ---
+            cfg_path = str(getattr(self, "config_path", "")).lower()
+            is_esmc_model = ("esmc" in cfg_path) or ("evolutionaryscale" in cfg_path)
+            if is_esmc_model:
+                print("[LoRA::ESMC] Detected ESMC backbone — using external lora_esmc_adapter.")
+                try:
+                    from .lora_esmc_adapter import apply_lora_to_esmc
+                    self.model = apply_lora_to_esmc(
+                        self.model,
+                        self.lora_kwargs,
+                        num_lora=self.lora_kwargs.num_lora,
+                        is_trainable=is_trainable,
+                        config_list=config_list,
+                    )
+                    print("[LoRA::ESMC] Successfully applied ESMC LoRA adapter.")
+                except Exception as e:
+                    print(f"[LoRA::ESMC] Failed to apply ESMC external LoRA: {e}")
+                    raise
+                # After LoRA model is initialized, add trainable parameters to optimizer)
+                self.init_optimizers()
+                return
+            # --- new end ---
+            
+            for i in range(self.lora_kwargs.num_lora):
+                adapter_name = f"adapter_{i}" if self.lora_kwargs.num_lora > 1 else "default"
                 
-                def forward(*args, **kwargs):
-                    logits_list = []
-                    ori_shape = None
-                    
-                    for i in range(self.lora_kwargs.num_lora):
-                        adapter_name = f"adapter_{i}"
-                        self.model.set_adapter(adapter_name)
-                        logits = func(*args, **kwargs)
-                        logits_list.append(logits)
-                        
-                        if ori_shape is None:
-                            ori_shape = logits.shape
-                    
-                    logits = torch.stack(logits_list, dim=0)
-                    
-                    # For classification task, final labels are voted by all LoRA models
-                    if len(ori_shape) == 2:
-                        logits = logits.permute(1, 0, 2)
-                        preds = logits.argmax(dim=-1)
-                        preds = torch.mode(preds, dim=1).values
-                        
-                        # Generate dummy logits to match the original output
-                        dummy_logits = torch.zeros(ori_shape).to(logits)
-                        for i, pred in enumerate(preds):
-                            dummy_logits[i, pred] = 1.0
-                    
-                    # For regression task, final labels are averaged among all LoRA models
+                # Load pre-trained LoRA weights
+                if i < len(config_list):
+                    lora_config_path = config_list[i].lora_config_path
+                    if i == 0:
+                        # If i == 0, initialize a PEFT model
+                        self.model = PeftModelForSequenceClassification.from_pretrained(self.model,
+                                                                                        lora_config_path,
+                                                                                        adapter_name=adapter_name,
+                                                                                        is_trainable=is_trainable)
                     else:
-                        dummy_logits = logits.mean(dim=0)
-                    
-                    return dummy_logits.detach()
+                        self.model.load_adapter(lora_config_path, adapter_name=adapter_name, is_trainable=is_trainable)
                 
-                return forward
+                # Initialize LoRA model for training
+                else:
+                    lora_config = {
+                        "task_type": "SEQ_CLS",
+                        "target_modules": ["query", "key", "value", "intermediate.dense", "output.dense"],
+                        "modules_to_save": ["classifier"],
+                        "inference_mode": False,
+                        "r": getattr(self.lora_kwargs, "r", 8),
+                        "lora_dropout": getattr(self.lora_kwargs, "lora_dropout", 0.0),
+                        "lora_alpha": getattr(self.lora_kwargs, "lora_alpha", 16),
+                    }
+                    
+                    lora_config = LoraConfig(**lora_config)
+                    
+                    if i == 0:
+                        # If i == 0, initialize a PEFT model
+                        self.model = get_peft_model(self.model, lora_config, adapter_name=adapter_name)
+                    
+                    else:
+                        self.model.add_adapter(adapter_name, lora_config)
             
-            self.forward = lora_forward(self.forward)
-        
-        print(f"Now active LoRA model: {self.model.active_adapter}")
-        self.model.print_trainable_parameters()
-        
-        # After LoRA model is initialized, add trainable parameters to optimizer)
-        self.init_optimizers()
+            if self.lora_kwargs.num_lora > 1:
+                # Multiple LoRA models only support inference mode
+                print("Multiple LoRA models are used. This only supports inference mode. If you want to train the model,"
+                    "set num_lora to 1.")
+                
+                # Replace the normal forward function with the lora ensemble function, which averages the outputs of all
+                # LoRA models.
+                def lora_forward(func):
+                    
+                    def forward(*args, **kwargs):
+                        logits_list = []
+                        ori_shape = None
+                        
+                        for i in range(self.lora_kwargs.num_lora):
+                            adapter_name = f"adapter_{i}"
+                            self.model.set_adapter(adapter_name)
+                            logits = func(*args, **kwargs)
+                            logits_list.append(logits)
+                            
+                            if ori_shape is None:
+                                ori_shape = logits.shape
+                        
+                        logits = torch.stack(logits_list, dim=0)
+                        
+                        # For classification task, final labels are voted by all LoRA models
+                        if len(ori_shape) == 2:
+                            logits = logits.permute(1, 0, 2)
+                            preds = logits.argmax(dim=-1)
+                            preds = torch.mode(preds, dim=1).values
+                            
+                            # Generate dummy logits to match the original output
+                            dummy_logits = torch.zeros(ori_shape).to(logits)
+                            for i, pred in enumerate(preds):
+                                dummy_logits[i, pred] = 1.0
+                        
+                        # For regression task, final labels are averaged among all LoRA models
+                        else:
+                            dummy_logits = logits.mean(dim=0)
+                        
+                        return dummy_logits.detach()
+                    
+                    return forward
+                
+                self.forward = lora_forward(self.forward)
+            
+            print(f"Now active LoRA model: {self.model.active_adapter}")
+            self.model.print_trainable_parameters()
+            
+            # After LoRA model is initialized, add trainable parameters to optimizer)
+            self.init_optimizers()
     
     def initialize_model(self):
-        # --------------------------------------------------------
-        # [ESMC Model Isolation] — Added logic (leave the rest below intact)
-        # --------------------------------------------------------
-        cfg_path_lower = str(self.config_path).lower()
-        if "esmc" in cfg_path_lower or "evolutionaryscale" in cfg_path_lower:
-            print("[SaprotBaseModel] Detected ESMC backbone — loading via EvolutionaryScale SDK.")
+        """
+        Initialize backbone model according to base_model name (ESM2 / ESMC / ProtBert / etc).
+        """
 
+        # ==========================================================
+        # (A) New branch: detect and load EvolutionaryScale ESMC
+        # ==========================================================
+        cfg_path_str = str(self.config_path).lower()
+        is_esmc_model = "esmc" in cfg_path_str or "evolutionaryscale" in cfg_path_str
+
+        if is_esmc_model:
+            print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
+
+            # --- Patch 1: disable get_esmc_model_tokenizers() globally  ---
             try:
-                from esm.models.esmc import ESMC
-                self.model = ESMC.from_pretrained("esmc_300m")
-                print("[ESMC] Successfully loaded ESMC backbone.")
+                import esm.tokenization as esm_tok
+                esm_tok.get_esmc_model_tokenizers = lambda *a, **kw: None
+                print("[Patch Applied] Overrode esm.tokenization.get_esmc_model_tokenizers() to avoid tokenizer init.")
             except Exception as e:
-                raise RuntimeError(f"[ESMC] Failed to load ESMC backbone: {e}")
+                print("[Patch Failed] Could not override get_esmc_model_tokenizers:", e)
 
-            # Attach dummy tokenizer to maintain interface
-            class DummyTokenizer:
-                pad_token_id = 1
-                eos_token_id = 2
-                bos_token_id = 0
-            self.tokenizer = DummyTokenizer()
-            self.model.tokenizer = self.tokenizer
+            # --- (still keep old cls_token deletion patch ) ---
+            try:
+                import esm.tokenization.sequence_tokenizer as stn
+                tok_cls = getattr(stn, "EsmSequenceTokenizer", None)
+                if tok_cls is not None and isinstance(
+                    getattr(type(tok_cls), "cls_token", None), property
+                ):
+                    delattr(tok_cls, "cls_token")
+                    print("[Patch Applied] Removed EsmSequenceTokenizer.cls_token to fix ESMC conflict.")
+            except Exception as e:
+                print("[Patch Skipped] ESMC tokenizer patch failed:", e)
 
-            # Optional gradient checkpointing or freezing consistent with other models
+            from esm.models.esmc import ESMC
+            from esm.sdk.api import ESMProtein, LogitsConfig
+            from types import SimpleNamespace
+
+            self.tokenizer = None
+
+            # --- Patch 2: finally load model  ---
+            self.model = ESMC.from_pretrained("esmc_300m")
+
+            # Try importing ESMTokenizer from multiple possible locations
+            ESMTokenizer = None
+            try:
+                from esm.sdk.api import ESMTokenizer
+                print("[Patch Applied] Using esm.sdk.api.ESMTokenizer")
+            except ImportError:
+                try:
+                    from esm.tokenizers.tokenizer import ESMTokenizer
+                    print("[Patch Applied] Using esm.tokenizers.tokenizer.ESMTokenizer")
+                except ImportError:
+                    print("[Patch Warning] Could not find ESMTokenizer in any known location! Using DummyTokenizer instead.")
+
+            # Attach tokenizer if found
+            if ESMTokenizer is not None:
+                try:
+                    self.model.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
+                    self.tokenizer = self.model.tokenizer
+                except Exception as e:
+                    print(f"[Warning] Failed to load ESMTokenizer.from_pretrained: {e}. Using DummyTokenizer instead.")
+                    class DummyTokenizer:
+                        pad_token_id = 1
+                        eos_token_id = 2
+                        bos_token_id = 0
+                    self.model.tokenizer = DummyTokenizer()
+                    self.tokenizer = self.model.tokenizer
+            else:
+                class DummyTokenizer:
+                    pad_token_id = 1
+                    eos_token_id = 2
+                    bos_token_id = 0
+                self.model.tokenizer = DummyTokenizer()
+                self.tokenizer = self.model.tokenizer
+
+            # --- Patch 3: restore typing for safety (optional) ---
+            import esm.tokenization as esm_tok
+            esm_tok.get_esmc_model_tokenizers = esm_tok.get_esmc_model_tokenizers  # safe no‑op
+
+            if not hasattr(self.model, "config"):
+                self.model.config = SimpleNamespace(
+                    use_return_dict=True,
+                    hidden_size=getattr(self.model, "hidden_size", 1024),
+                )
+                print("[SaProtBaseModel] Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
+
             if self.freeze_backbone:
                 for p in self.model.parameters():
                     p.requires_grad = False
+
+            self.esmc_api = {"ESMProtein": ESMProtein, "LogitsConfig": LogitsConfig}
+
             if hasattr(self.model, "encoder"):
                 self.model.encoder.gradient_checkpointing = self.gradient_checkpointing
 
-            print("[SaprotBaseModel] ESMC backbone isolated initialization complete.")
-            return
-        # --------------------------------------------------------
+            if hasattr(self.model, "forward"):
+                old_forward = self.model.forward
 
-        # Initialize tokenizer
+                def wrapped_forward(*args, **kwargs):
+                    # Map typical Hugging Face naming -> ESMC expected arguments
+                    if "input_ids" in kwargs:
+                        # Old ESMC versions: argument name was "tokens"
+                        # New ESMC versions: argument name is "sequence_tokens"
+                        if "sequence_tokens" not in kwargs:
+                            kwargs["sequence_tokens"] = kwargs.pop("input_ids")
+                        else:
+                            kwargs.pop("input_ids")
+
+                    # Clean extra HF arguments ESMC doesn’t accept
+                    for k in [
+                        "attention_mask", "token_type_ids", "position_ids", "labels",
+                        "inputs_embeds", "past_key_values", "use_cache",
+                        "output_attentions", "output_hidden_states", "return_dict", "sequences",
+                    ]:
+                        kwargs.pop(k, None)
+
+                    return old_forward(*args, **kwargs)
+
+                self.model.forward = wrapped_forward
+                print("[Patch] Installed ESMC.forward adapter at top level (cleaned kwargs only).")
+
+            print("[SaProtBaseModel] ESMC backbone initialized successfully.")
+            return
+
+        # ==========================================================
+        # 1. Initialize tokenizer
+        # ==========================================================
         self.tokenizer = AutoTokenizer.from_pretrained(self.config_path)
-        
+            
         # Initialize different models according to task
         config = AutoConfig.from_pretrained(self.config_path)
         if self.extra_config:
             for k, v in self.extra_config.items():
                 setattr(config, k, v)
-        
+            
         else:
             self.extra_config = {}
-        
+            
         if self.task == 'classification':
             # Note that self.num_labels should be set in child classes
             if self.load_pretrained:
                 self.model = AutoModelForSequenceClassification.from_pretrained(
                     self.config_path, num_labels=self.num_labels, **self.extra_config)
-            
+                
             else:
                 config.num_labels = self.num_labels
                 self.model = AutoModelForSequenceClassification.from_config(config)
-        
+            
         if self.task == 'token_classification':
             # Note that self.num_labels should be set in child classes
             if self.load_pretrained:
                 self.model = AutoModelForTokenClassification.from_pretrained(
                     self.config_path, num_labels=self.num_labels, **self.extra_config)
-            
+                
             else:
                 config.num_labels = self.num_labels
                 self.model = AutoModelForTokenClassification.from_config(config)
-        
+            
         elif self.task == 'regression':
             if self.load_pretrained:
                 self.model = AutoModelForSequenceClassification.from_pretrained(
                     self.config_path, num_labels=1, **self.extra_config)
-            
+                
             else:
                 config.num_labels = 1
                 self.model = AutoModelForSequenceClassification.from_config(config)
-        
+            
         elif self.task == 'lm':
             if self.load_pretrained:
                 self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
-            
+                
             else:
                 self.model = AutoModelForMaskedLM.from_config(config)
-        
+            
         elif self.task == 'base':
             if self.load_pretrained:
                 self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
-            
+                
             else:
                 self.model = AutoModelForMaskedLM.from_config(config)
-            
+                
             if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
                 self.model.lm_head = None
-        
+            
         if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
             # Remove contact head
             self.model.esm.contact_head = None
-            
+                
             # Remove position embedding if the embedding type is ``rotary``
             if config.position_embedding_type == "rotary":
                 self.model.esm.embeddings.position_embeddings = None
-            
+                
             # Set gradient checkpointing
             self.model.esm.encoder.gradient_checkpointing = self.gradient_checkpointing
-        
+            
         # Freeze the backbone of the model
         if self.freeze_backbone:
             for param in self.model.esm.parameters():
