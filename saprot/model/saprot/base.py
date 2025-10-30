@@ -187,6 +187,8 @@ class SaprotBaseModel(AbstractModel):
         # ==========================================================
         # 1. New branch: detect and load EvolutionaryScale ESMC
         # ==========================================================
+        from transformers import tokenization_utils_base
+        
         cfg_path_str = str(self.config_path).lower()
         is_esmc_model = "esmc" in cfg_path_str or "evolutionaryscale" in cfg_path_str
 
