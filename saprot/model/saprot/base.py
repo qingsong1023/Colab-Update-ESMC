@@ -210,7 +210,16 @@ class SaprotBaseModel(AbstractModel):
 
         if is_esmc_model:
             print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
-            # --- 仅在 ESMC 分支前打补丁，防止 transformers 属性冲突 ---
+
+            # --- Patch 1: disable get_esmc_model_tokenizers() globally  ---
+            try:
+                import esm.tokenization as esm_tok
+                esm_tok.get_esmc_model_tokenizers = lambda *a, **kw: None
+                print("[Patch Applied] Overrode esm.tokenization.get_esmc_model_tokenizers() to avoid tokenizer init.")
+            except Exception as e:
+                print("[Patch Failed] Could not override get_esmc_model_tokenizers:", e)
+
+            # --- (still keep old cls_token deletion patch ) ---
             try:
                 import esm.tokenization.sequence_tokenizer as stn
                 tok_cls = getattr(stn, "EsmSequenceTokenizer", None)
@@ -227,9 +236,14 @@ class SaprotBaseModel(AbstractModel):
             from types import SimpleNamespace
 
             self.tokenizer = None
-            self.model = ESMC.from_pretrained("esmc_300m", tokenizer=None)
 
-            # Compatible dummy config for LoRA / PEFT
+            # --- Patch 2: finally load model  ---
+            self.model = ESMC.from_pretrained("esmc_300m")
+
+            # --- Patch 3: restore typing for safety (optional) ---
+            import esm.tokenization as esm_tok
+            esm_tok.get_esmc_model_tokenizers = esm_tok.get_esmc_model_tokenizers  # safe no‑op
+
             if not hasattr(self.model, "config"):
                 self.model.config = SimpleNamespace(
                     use_return_dict=True,
@@ -237,19 +251,15 @@ class SaprotBaseModel(AbstractModel):
                 )
                 print("[SaProtBaseModel] Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
 
-            # Optional freeze backbone
             if self.freeze_backbone:
                 for p in self.model.parameters():
                     p.requires_grad = False
 
-            # Save EvolutionaryScale API
             self.esmc_api = {"ESMProtein": ESMProtein, "LogitsConfig": LogitsConfig}
 
-            # Gradient checkpointing compatibility
             if hasattr(self.model, "encoder"):
                 self.model.encoder.gradient_checkpointing = self.gradient_checkpointing
 
-            # Forward-wrapper: filter HuggingFace-style kwargs
             if hasattr(self.model, "forward"):
                 old_forward = self.model.forward
 
@@ -269,7 +279,6 @@ class SaprotBaseModel(AbstractModel):
 
             print("[SaProtBaseModel] ESMC backbone initialized successfully.")
             return
-
 
         # ==========================================================
         # 1. Initialize tokenizer
