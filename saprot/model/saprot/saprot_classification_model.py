@@ -29,8 +29,8 @@ class SaprotClassificationModel(SaprotBaseModel):
             print("\n================ DEBUG: forward() called ==================")
             print(f"Initial model class: {self.model.__class__.__name__}")
 
+            # -------------------- unwrap LoRA / PEFT  --------------------
             model_ref = self.model
-            # unwrap peft/adapter wrappers until we reach real backbone
             unwrap_depth = 0
             while hasattr(model_ref, "base_model") or hasattr(model_ref, "model"):
                 unwrap_depth += 1
@@ -47,26 +47,53 @@ class SaprotClassificationModel(SaprotBaseModel):
             print(f"[DEBUG] Input keys before mapping: {list(inputs.keys())}")
 
             # ==============================================================
-            # ✅ 仅对 ESMC / EvolutionaryScale 类型模型进行隔离处理
+            # ✅ 对 ESMC / EvolutionaryScale 类型模型进行隔离处理
             # ==============================================================
             if "esmc" in real_cls_name or "evolutionaryscale" in real_cls_name:
                 print("[DEBUG] Detected ESMC model — expecting tokenized Tensor input.")
 
-                # 只接受外部已经 token 化后的输入
+                # ---- STEP 1️⃣: 兼容旧字段 “sequences” (可能是 list[str] / Tensor)
+                if "sequences" in inputs and "input_ids" not in inputs and "sequence_tokens" not in inputs:
+                    seq_obj = inputs["sequences"]
+
+                    # 🧩 判断类型: 如果是 list[str]，自动调用 tokenizer
+                    if isinstance(seq_obj, (list, tuple)) and len(seq_obj) > 0 and isinstance(seq_obj[0], str):
+                        print("[DEBUG] 'sequences' detected as list of str → Auto-tokenizing with model.tokenizer() ...")
+                        tokens = self.model.tokenizer(
+                            seq_obj, return_tensors='pt', padding=True, truncation=True
+                        )
+                        device_ = next(self.model.parameters()).device
+                        inputs["input_ids"] = tokens["input_ids"].to(device_)
+                        inputs["attention_mask"] = tokens["attention_mask"].to(device_)
+                        print(f"[DEBUG] Tokenization complete → 'input_ids' shape: {inputs['input_ids'].shape}")
+
+                    # 否则可能已经是 tensor（旧式 collate_fn 输出）
+                    elif isinstance(seq_obj, torch.Tensor):
+                        print("[DEBUG] 'sequences' detected as Tensor → mapping to 'sequence_tokens'")
+                        inputs["sequence_tokens"] = seq_obj
+                    else:
+                        raise TypeError(
+                            f"[SaProtClassificationModel] Unexpected data type under 'sequences': {type(seq_obj)}"
+                        )
+
+                # ---- STEP 2️⃣: 检查必须有 tokenized tensor
                 if "input_ids" not in inputs and "sequence_tokens" not in inputs:
                     raise ValueError(
                         "[SaProtClassificationModel] ESMC forward expects tokenized tensor under 'input_ids' "
                         "(please call esm_model.tokenizer() or alphabet.batch_converter() before forward)."
                     )
 
-                # 如果外部还使用了旧键 sequence_tokens，也兼容映射一下
+                # ---- STEP 3️⃣: 向后兼容 'sequence_tokens'
                 if "sequence_tokens" not in inputs and "input_ids" in inputs:
                     inputs["sequence_tokens"] = inputs["input_ids"]
 
-                # -------------------- 模型真正 forward --------------------
+                # ==============================================================
+                # 🚀 真正地 forward 调用模型
+                # ==============================================================
                 outputs = self.model(**inputs)
                 print("[DEBUG] Forwarded through ESMC successfully")
 
+                # ---- STEP 4️⃣: 返回统一输出
                 if isinstance(outputs, dict):
                     print(f"[DEBUG] Output keys: {list(outputs.keys())}")
                     return outputs.get("logits", list(outputs.values())[0])
