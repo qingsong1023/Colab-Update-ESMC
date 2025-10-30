@@ -233,19 +233,20 @@ class SaprotBaseModel(AbstractModel):
             self.tokenizer = None
             self.model = ESMC.from_pretrained("esmc_300m")
 
-            # ----✅ 修改的部分 start ----
-            try:
-                print("[SaProtBaseModel] Initializing tokenizer (notebook-style)...")
-                from esm import pretrained
-                local_model = pretrained.load_local_model("esmc_300m")
-                self.model.tokenizer = local_model.tokenizer
-                self.tokenizer = self.model.tokenizer
-                print(f"[SaProtBaseModel] Tokenizer type: {type(self.tokenizer)} ✅")
-            except Exception as e:
-                print(f"[SaProtBaseModel::TokenizerInitError] Failed to init ESMTokenizer: {e}")
-                self.tokenizer = None
-                self.model.tokenizer = None
-            # ----✅ 修改的部分 end ----
+            # ----✅ 简化：直接使用 ESMC 自带 tokenizer ----
+            self.tokenizer = getattr(self.model, "tokenizer", None)
+            print(f"[SaProtBaseModel] Detected tokenizer: {type(self.tokenizer)}")
+
+            if self.tokenizer is None:
+                # 极端情况下，如果未来 SDK 改变了行为，可保留一个安全兜底
+                try:
+                    from esm.sdk.api import ESMTokenizer
+                    self.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
+                    self.model.tokenizer = self.tokenizer
+                    print("[SaProtBaseModel] Fallback: created ESMTokenizer manually ✅")
+                except Exception as e:
+                    print(f"[SaProtBaseModel::TokenizerFallback] Failed to init fallback tokenizer: {e}")
+            # ----结束 ----
 
             # 后续逻辑完全不动
             import esm.tokenization as esm_tok
