@@ -101,7 +101,7 @@ class SaprotClassificationDataset(LMDBDataset):
         labels = {"labels": label_ids}
     
         if self.tokenizer is None:
-            inputs = {"sequences": list(seqs)}
+            inputs = {"inputs": list(seqs)} 
         else:
             encoder_info = self.tokenizer.batch_encode_plus(seqs, return_tensors='pt', padding=True)
             inputs = {"inputs": encoder_info}
