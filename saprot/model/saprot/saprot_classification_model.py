@@ -80,6 +80,15 @@ class SaprotClassificationModel(SaprotBaseModel):
                     except Exception as e:
                         print(f"[WARN] Cannot get shape of sequence_tokens: {e}")
 
+                    # 🔧 ensure sequence_tokens is torch.Tensor
+                    if isinstance(inputs["sequence_tokens"], list):
+                        try:
+                            print("[DEBUG] sequence_tokens is list, converting to torch tensor (dtype=torch.long)")
+                            inputs["sequence_tokens"] = torch.tensor(inputs["sequence_tokens"], dtype=torch.long)
+                            print(f"[DEBUG] sequence_tokens converted shape: {inputs['sequence_tokens'].shape}")
+                        except Exception as e:
+                            print(f"[ERROR] Failed to convert sequence_tokens to tensor: {e}")
+
                 outputs = self.model(**inputs)
                 print("[DEBUG] Forwarded through ESMC successfully")
 
