@@ -87,8 +87,12 @@ class SaprotBaseModel(AbstractModel):
                                                                 "equal to the number of weight files.")
             
             # --- new: detect if esmc backbone ---
-            cfg_path = str(getattr(self, "config_path", "")).lower()
-            is_esmc_model = ("esmc" in cfg_path) or ("evolutionaryscale" in cfg_path)
+            import os
+            cfg_path = os.path.basename(str(getattr(self, "config_path", ""))).lower()
+            is_esmc_model = False
+            if cfg_path.startswith("esmc") or cfg_path.startswith("evolutionaryscale"):
+                is_esmc_model = True
+
             if is_esmc_model:
                 print("[LoRA::ESMC] Detected ESMC backbone — using external lora_esmc_adapter.")
                 try:
@@ -236,8 +240,12 @@ class SaprotBaseModel(AbstractModel):
         # ==========================================================
         # (A) New branch: detect and load EvolutionaryScale ESMC
         # ==========================================================
-        cfg_path_str = str(self.config_path).lower()
-        is_esmc_model = "esmc" in cfg_path_str or "evolutionaryscale" in cfg_path_str
+        import os
+        cfg_path = os.path.basename(str(getattr(self, "config_path", ""))).lower()
+        is_esmc_model = False
+
+        if cfg_path.startswith("esmc") or cfg_path.startswith("evolutionaryscale"):
+            is_esmc_model = True
 
         if is_esmc_model:
             print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
