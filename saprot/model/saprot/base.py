@@ -246,7 +246,7 @@ class SaprotBaseModel(AbstractModel):
             try:
                 import esm.tokenization.sequence_tokenizer as stn
                 tok_cls = getattr(stn, "EsmSequenceTokenizer", None)
-                for bad_attr in ["cls_token", "pad_token", "sep_token", "mask_token", "eos_token"]:
+                for bad_attr in ["cls_token", "pad_token", "mask_token", "eos_token"]:
                     try:
                         if tok_cls and isinstance(getattr(tok_cls, bad_attr, None), property):
                             delattr(tok_cls, bad_attr)

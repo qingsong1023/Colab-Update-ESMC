@@ -46,13 +46,10 @@ class SaprotClassificationModel(SaprotBaseModel):
             print(f"[DEBUG] Final detected inner model class: {real_cls_name}")
             print(f"[DEBUG] Input keys before mapping: {list(inputs.keys())}")
 
-            # ==============================================================
-            # 对 ESMC / EvolutionaryScale 类型模型进行隔离处理
-            # ==============================================================
             if "esmc" in real_cls_name or "evolutionaryscale" in real_cls_name:
-                print("[DEBUG] Detected ESMC model — expecting tokenized Tensor input.")
+                print("[DEBUG] Detected ESMC model expecting tokenized Tensor input.")
 
-                # ---- STEP 1: 兼容旧字段 “sequences” (可能是 list[str] / Tensor)
+                # ---- STEP 1: 兼容旧字段 sequences (可能是 list[str] / Tensor)
                 if "sequences" in inputs and "input_ids" not in inputs and "sequence_tokens" not in inputs:
                     seq_obj = inputs["sequences"]
 
@@ -69,7 +66,7 @@ class SaprotClassificationModel(SaprotBaseModel):
 
                     # 否则可能已经是 tensor（旧式 collate_fn 输出）
                     elif isinstance(seq_obj, torch.Tensor):
-                        print("[DEBUG] 'sequences' detected as Tensor → mapping to 'sequence_tokens'")
+                        print("[DEBUG] 'sequences' detected as Tensor mapping to 'sequence_tokens'")
                         inputs["sequence_tokens"] = seq_obj
                     else:
                         raise TypeError(
@@ -130,6 +127,28 @@ class SaprotClassificationModel(SaprotBaseModel):
         return logits
 
     def loss_func(self, stage, logits, labels):
+        # ======== Debug: print ESMC output structure ========
+        if not isinstance(logits, torch.Tensor):
+            print("\n[DEBUG] loss_func called with non-Tensor logits")
+            print("[DEBUG] type:", type(logits))
+            try:
+                # 如果是一个 dataclass 或 namedtuple，有 __dict__
+                if hasattr(logits, "__dict__"):
+                    print("[DEBUG] __dict__ keys:", list(logits.__dict__.keys()))
+                # 如果是普通命名元组，打印 _fields
+                elif hasattr(logits, "_fields"):
+                    print("[DEBUG] _fields:", logits._fields)
+                # 如果是 dict
+                elif isinstance(logits, dict):
+                    print("[DEBUG] dict keys:", list(logits.keys()))
+                else:
+                    # 最后兜底打印所有可访问属性
+                    print("[DEBUG] dir():", [k for k in dir(logits) if not k.startswith("_")])
+            except Exception as e:
+                print("[DEBUG] Failed to inspect logits:", e)
+        # ======== Debug end ========
+
+        # 暂时先不要 raise，让它真正报错前能打印出结构
         if not isinstance(logits, torch.Tensor):
             if hasattr(logits, "logits"):
                 logits = logits.logits
