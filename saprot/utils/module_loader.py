@@ -159,7 +159,6 @@ def load_dataset(config):
 #     return plugins
 
 os.environ["TORCH_CUDA_FUSER_DISABLE_BF16"] = "1"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 # Initialize strategy
 def load_strategy(config):
