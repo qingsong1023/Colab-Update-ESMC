@@ -180,10 +180,17 @@ def load_trainer(config):
         trainer_config.logger = False
 
     trainer_config["precision"] = "16-mixed"
+    fp16_plugin = MixedPrecisionPlugin(precision="16-mixed", device="cuda")
+
+    print(f"[DEBUG] Using Trainer precision: {trainer_config.get('precision')}")
+    print("[DEBUG] Force override: using MixedPrecisionPlugin(fp16)")
+
+    if "strategy" in trainer_config:
+        trainer_config.pop("strategy")
     
     # Initialize strategy
     # strategy = load_strategy(trainer_config.pop('strategy'))
     # Strategy is not used in Colab
     trainer_config.pop('strategy')
     
-    return pl.Trainer(**trainer_config, callbacks=[], use_distributed_sampler=False)
+    return pl.Trainer(**trainer_config, plugins=[fp16_plugin], callbacks=[], use_distributed_sampler=False)
