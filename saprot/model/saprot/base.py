@@ -70,8 +70,9 @@ class SaprotBaseModel(AbstractModel):
         
         self.valid_metrics_list = {}
         self.valid_metrics_list['step'] = []
-    
+
     def _init_lora(self):
+            print("[DEBUG] model before LoRA:", type(self.model))
             from peft import (
                 LoraConfig,
                 # PeftModelForSequenceClassification,
