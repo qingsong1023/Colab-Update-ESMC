@@ -152,8 +152,20 @@ class SaprotClassificationModel(SaprotBaseModel):
         if not isinstance(logits, torch.Tensor):
             if hasattr(logits, "logits"):
                 logits = logits.logits
-            elif isinstance(logits, dict) and "logits" in logits:
-                logits = logits["logits"]
+            elif hasattr(logits, "sequence_logits"):
+                logits = logits.sequence_logits
+            elif isinstance(logits, dict):
+                if "logits" in logits:
+                    logits = logits["logits"]
+                elif "sequence_logits" in logits:
+                    logits = logits["sequence_logits"]
+                else:
+                    raise TypeError(f"[SaProtClassificationModel] logits dict has no proper key: {logits.keys()}")
+            elif hasattr(logits, "__getitem__"):
+                try:
+                    logits = logits[0]
+                except Exception:
+                    raise TypeError(f"[SaProtClassificationModel] Unknown ESMCOutput structure: {logits}")
             else:
                 raise TypeError(f"[SaProtClassificationModel] logits must be Tensor, got {type(logits)}")
 
