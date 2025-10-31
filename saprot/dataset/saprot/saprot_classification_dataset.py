@@ -39,6 +39,9 @@ class SaprotClassificationDataset(LMDBDataset):
             self.tokenizer = None
         else:
             self.tokenizer = EsmTokenizer.from_pretrained(tokenizer)
+        # ==============================================================
+        # isolate ESMC model (do not load EsmTokenizer) end
+        # ==============================================================
 
         self.max_length = max_length
         self.use_bias_feature = use_bias_feature

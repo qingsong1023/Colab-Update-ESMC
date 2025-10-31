@@ -23,8 +23,9 @@ class SaprotClassificationModel(SaprotBaseModel):
 
     def forward(self, inputs, coords=None):
         # ==============================================================
-        # Step 0 - Resolve true model class (debug unwrap)
+        # add esmc start
         # ==============================================================
+        # Step 0 - Resolve true model class (debug unwrap)
         model_ref = self.model
         unwrap_depth = 0
         print("[DEBUG] ===== Start unwrapping model =====")
@@ -42,17 +43,12 @@ class SaprotClassificationModel(SaprotBaseModel):
             if unwrap_depth > 50:
                 print(f"[DEBUG] WARNING: unwrap depth > 50, may indicate recursive model structure!")
                 break
-                
         print(f"[DEBUG] Final resolved model class: {model_ref.__class__.__name__}")
         print("[DEBUG] ===== End unwrapping model =====")
-        # ==============================================================
 
-        # ==============================================================
         # Step 1 - ESMC / EvolutionaryScale Models
-        # ==============================================================
         if any(k in real_cls_name for k in ["esmc", "evolutionaryscale"]):
             seq_obj = inputs.get("sequences", None)
-
             # ---- STEP 1.1: backward compatibility for 'sequences'
             if seq_obj is not None and "input_ids" not in inputs and "sequence_tokens" not in inputs:
                 if isinstance(seq_obj, (list, tuple)) and len(seq_obj) > 0 and isinstance(seq_obj[0], str):
@@ -64,20 +60,19 @@ class SaprotClassificationModel(SaprotBaseModel):
                     inputs["sequence_tokens"] = seq_obj
                 else:
                     raise TypeError(f"[SaProtClassificationModel] Unexpected type under 'sequences': {type(seq_obj)}")
-
             # ---- STEP 1.2: ensure we actually have tokens
             if "input_ids" not in inputs and "sequence_tokens" not in inputs:
                 raise ValueError(
                     "[SaProtClassificationModel] ESMC forward requires tokenized tensors "
                     "under 'input_ids' or 'sequence_tokens'."
                 )
-
             # ---- STEP 1.3: unify field names
             if "sequence_tokens" not in inputs and "input_ids" in inputs:
                 inputs["sequence_tokens"] = inputs["input_ids"]
-
             outputs = self.model(**inputs)
             return outputs.get("logits") if isinstance(outputs, dict) else outputs
+        # ==============================================================
+        # add esmc end 
         # ==============================================================
 
         if coords is not None:
@@ -103,7 +98,6 @@ class SaprotClassificationModel(SaprotBaseModel):
         return logits
 
     def loss_func(self, stage, logits, labels):
-        # ======== Debug: print ESMC output structure ========
         if not isinstance(logits, torch.Tensor):
             if hasattr(logits, "logits"):
                 logits = logits.logits
@@ -120,16 +114,13 @@ class SaprotClassificationModel(SaprotBaseModel):
                 logits = logits[0]
             else:
                 raise TypeError(f"[SaProtClassificationModel] logits must be Tensor, got {type(logits)}")
-        # ======== Debug: print ESMC output structure ========
-
         label = labels["labels"]
 
-        # ---- Automatic aggregation for token-level outputs such as ESMC ----
+        # Automatic aggregation for token-level outputs such as ESMC
         if logits.ndim == 3:
             logits = logits.mean(dim=1)
         if label.ndim > 1:
             label = label.squeeze(-1)
-        # ---- Automatic aggregation for token-level outputs such as ESMC ----
 
         loss = cross_entropy(logits, label)
 
