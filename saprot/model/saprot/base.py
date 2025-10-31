@@ -94,7 +94,7 @@ class SaprotBaseModel(AbstractModel):
                 is_esmc_model = True
 
             if is_esmc_model:
-                print("[LoRA::ESMC] Detected ESMC backbone — using external lora_esmc_adapter.")
+                print("[LoRA::ESMC] Detected ESMC backbone using external lora_esmc_adapter.")
                 try:
                     from .self_peft.lora_esmc_adapter import apply_lora_to_esmc
                     self.model = apply_lora_to_esmc(
