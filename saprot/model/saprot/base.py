@@ -241,14 +241,8 @@ class SaprotBaseModel(AbstractModel):
 
         if is_esmc_model:
             print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
-            # try:
-                # import esm.tokenization as esm_tok
-                # esm_tok.get_esmc_model_tokenizers = lambda *a, **kw: None
-                # print("[Patch Applied] Overrode esm.tokenization.get_esmc_model_tokenizers() to avoid tokenizer init.")
-            # except Exception as e:
-                # print("[Patch Failed] Could not override get_esmc_model_tokenizers:", e)
 
-            # (仍然保留 tokenizer patch)
+            # (仍然保留对 EsmSequenceTokenizer 的防御性 patch)
             try:
                 import esm.tokenization.sequence_tokenizer as stn
                 tok_cls = getattr(stn, "EsmSequenceTokenizer", None)
@@ -258,29 +252,31 @@ class SaprotBaseModel(AbstractModel):
             except Exception as e:
                 print("[Patch Skipped] ESMC tokenizer patch failed:", e)
 
+            # ==========================================================
+            # 修改开始：手动加载 tokenizer 并禁用自动加载
+            # ==========================================================
             from esm.models.esmc import ESMC
-            from esm.sdk.api import ESMProtein, LogitsConfig
+            from esm.sdk.api import ESMTokenizer, ESMProtein, LogitsConfig
             from types import SimpleNamespace
 
-            self.tokenizer = None
-            self.model = ESMC.from_pretrained("esmc_300m")
+            try:
+                print("[SaProtBaseModel] Manually loading ESMC tokenizer...")
+                self.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
 
-            # ----✅ 简化：直接使用 ESMC 自带 tokenizer ----
-            self.tokenizer = getattr(self.model, "tokenizer", None)
-            print(f"[SaProtBaseModel] Detected tokenizer: {type(self.tokenizer)}")
+                print("[SaProtBaseModel] Loading ESMC backbone model (without auto tokenizer)...")
+                self.model = ESMC.from_pretrained("esmc_300m", load_tokenizer=False)
 
-            if self.tokenizer is None:
-                # 极端情况下，如果未来 SDK 改变了行为，可保留一个安全兜底
-                try:
-                    from esm.sdk.api import ESMTokenizer
-                    self.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
-                    self.model.tokenizer = self.tokenizer
-                    print("[SaProtBaseModel] Fallback: created ESMTokenizer manually ✅")
-                except Exception as e:
-                    print(f"[SaProtBaseModel::TokenizerFallback] Failed to init fallback tokenizer: {e}")
-            # ----结束 ----
+                # tokenizer
+                self.model.tokenizer = self.tokenizer
+                print(f"[SaProtBaseModel] ✅ Attached custom tokenizer: {type(self.tokenizer)}")
 
-            # 后续逻辑完全不动
+            except Exception as e:
+                print(f"[SaProtBaseModel::ESMCManualLoadError] Failed to manually load ESMC: {e}")
+                raise
+            # ==========================================================
+            # 修改结束：后面所有逻辑保持不动
+            # ==========================================================
+
             import esm.tokenization as esm_tok
             esm_tok.get_esmc_model_tokenizers = esm_tok.get_esmc_model_tokenizers
 
@@ -300,6 +296,7 @@ class SaprotBaseModel(AbstractModel):
 
             if hasattr(self.model, "forward"):
                 old_forward = self.model.forward
+
                 def wrapped_forward(*args, **kwargs):
                     if "input_ids" in kwargs:
                         if "sequence_tokens" not in kwargs:
@@ -313,6 +310,7 @@ class SaprotBaseModel(AbstractModel):
                     ]:
                         kwargs.pop(k, None)
                     return old_forward(*args, **kwargs)
+
                 self.model.forward = wrapped_forward
                 print("[Patch] Installed ESMC.forward adapter at top level (cleaned kwargs only).")
 
