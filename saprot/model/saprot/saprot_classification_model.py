@@ -26,7 +26,11 @@ class SaprotClassificationModel(SaprotBaseModel):
         # isolate ESMC model (handle LoRA / PEFT wrapping)
         # ==============================================================
         try:
-            model_ref = self.model 
+            print("\n================ DEBUG: forward() called ==================")
+            print(f"Initial model class: {self.model.__class__.__name__}")
+
+            # -------------------- unwrap LoRA / PEFT  --------------------
+            model_ref = self.model
             unwrap_depth = 0
             while hasattr(model_ref, "base_model") or hasattr(model_ref, "model"):
                 unwrap_depth += 1
@@ -36,47 +40,71 @@ class SaprotClassificationModel(SaprotBaseModel):
                     model_ref = model_ref.model
                 else:
                     break
+                print(f"[DEBUG] Unwrapped level {unwrap_depth}: {model_ref.__class__.__name__}")
 
             real_cls_name = model_ref.__class__.__name__.lower()
+            print(f"[DEBUG] Final detected inner model class: {real_cls_name}")
+            print(f"[DEBUG] Input keys before mapping: {list(inputs.keys())}")
 
             if "esmc" in real_cls_name or "evolutionaryscale" in real_cls_name:
-                # ---- STEP 1: Backward compatibility for the field 'sequences' (may be list[str] / Tensor)
+                print("[DEBUG] Detected ESMC model expecting tokenized Tensor input.")
+
+                # ---- STEP 1: 兼容旧字段 sequences (可能是 list[str] / Tensor)
                 if "sequences" in inputs and "input_ids" not in inputs and "sequence_tokens" not in inputs:
                     seq_obj = inputs["sequences"]
 
-                    # Determine input type: if it's list[str], automatically call tokenizer
+                    # 判断类型: 如果是 list[str]，自动调用 tokenizer
                     if isinstance(seq_obj, (list, tuple)) and len(seq_obj) > 0 and isinstance(seq_obj[0], str):
+                        print("[DEBUG] 'sequences' detected as list of str → Auto-tokenizing with model.tokenizer() ...")
                         tokens = self.model.tokenizer(
                             seq_obj, return_tensors='pt', padding=True, truncation=True
                         )
                         device_ = next(self.model.parameters()).device
                         inputs["input_ids"] = tokens["input_ids"].to(device_)
                         inputs["attention_mask"] = tokens["attention_mask"].to(device_)
+                        print(f"[DEBUG] Tokenization complete → 'input_ids' shape: {inputs['input_ids'].shape}")
 
+                    # 否则可能已经是 tensor（旧式 collate_fn 输出）
                     elif isinstance(seq_obj, torch.Tensor):
+                        print("[DEBUG] 'sequences' detected as Tensor mapping to 'sequence_tokens'")
                         inputs["sequence_tokens"] = seq_obj
                     else:
                         raise TypeError(
                             f"[SaProtClassificationModel] Unexpected data type under 'sequences': {type(seq_obj)}"
                         )
 
-                # ---- STEP 2: Ensure the presence of tokenized tensors
+                # ---- STEP 2: 检查必须有 tokenized tensor
                 if "input_ids" not in inputs and "sequence_tokens" not in inputs:
                     raise ValueError(
                         "[SaProtClassificationModel] ESMC forward expects tokenized tensor under 'input_ids' "
                         "(please call esm_model.tokenizer() or alphabet.batch_converter() before forward)."
                     )
 
-                # ---- STEP 3: Backward compatibility for 'sequence_tokens'
+                # ---- STEP3: 向后兼容 'sequence_tokens'
                 if "sequence_tokens" not in inputs and "input_ids" in inputs:
                     inputs["sequence_tokens"] = inputs["input_ids"]
 
+                # ==============================================================
+                # 真正地 forward 调用模型
+                # ==============================================================
                 outputs = self.model(**inputs)
+                print("[DEBUG] Forwarded through ESMC successfully")
+
+                # ---- STEP 4: 返回统一输出
                 if isinstance(outputs, dict):
+                    print(f"[DEBUG] Output keys: {list(outputs.keys())}")
                     return outputs.get("logits", list(outputs.values())[0])
                 return outputs
-        except Exception:
-            pass
+
+            # ==============================================================
+            # 非 ESMC 模型：保持原有逻辑，不修改
+            # ==============================================================
+            else:
+                print("[DEBUG] Not an ESMC model, using default logic.")
+
+        except Exception as e:
+            print(f"[SaProtClassificationModel] ESMC forward isolation skipped: {e}")
+
         # ==============================================================
         # end isolate ESMC model
         # ==============================================================
@@ -101,6 +129,23 @@ class SaprotClassificationModel(SaprotBaseModel):
     def loss_func(self, stage, logits, labels):
         # ======== Debug: print ESMC output structure ========
         if not isinstance(logits, torch.Tensor):
+            print("\n[DEBUG] loss_func called with non-Tensor logits")
+            print("[DEBUG] type:", type(logits))
+            try:
+                if hasattr(logits, "__dict__"):
+                    print("[DEBUG] __dict__ keys:", list(logits.__dict__.keys()))
+                elif hasattr(logits, "_fields"):
+                    print("[DEBUG] _fields:", logits._fields)
+                elif isinstance(logits, dict):
+                    print("[DEBUG] dict keys:", list(logits.keys()))
+                else:
+                    print("[DEBUG] dir():", [k for k in dir(logits) if not k.startswith("_")])
+            except Exception as e:
+                print("[DEBUG] Failed to inspect logits:", e)
+        # ======== Debug end ========
+
+        # ---- 自动提取 logits ----
+        if not isinstance(logits, torch.Tensor):
             if hasattr(logits, "logits"):
                 logits = logits.logits
             elif hasattr(logits, "sequence_logits"):
@@ -113,32 +158,50 @@ class SaprotClassificationModel(SaprotBaseModel):
                 else:
                     raise TypeError(f"[SaProtClassificationModel] logits dict has no proper key: {logits.keys()}")
             elif hasattr(logits, "__getitem__"):
-                logits = logits[0]
+                try:
+                    logits = logits[0]
+                except Exception:
+                    raise TypeError(f"[SaProtClassificationModel] Unknown output structure: {logits}")
             else:
                 raise TypeError(f"[SaProtClassificationModel] logits must be Tensor, got {type(logits)}")
-        # ======== Debug: print ESMC output structure ========
 
+        # ---- 提取标签 ----
         label = labels["labels"]
 
-        # ---- Automatic aggregation for token-level outputs such as ESMC ----
-        if logits.ndim == 3:
-            logits = logits.mean(dim=1)
-        if label.ndim > 1:
-            label = label.squeeze(-1)
-        # ---- Automatic aggregation for token-level outputs such as ESMC ----
+        # ======== 打印形状 =========
+        print("\n[DEBUG] SHAPE CHECK before loss")
+        print(f"[DEBUG] logits.shape = {tuple(logits.shape)}")
+        if isinstance(label, torch.Tensor):
+            print(f"[DEBUG] label.shape = {tuple(label.shape)}, dtype = {label.dtype}")
+            print(f"[DEBUG] label example: {label[:5].cpu().tolist()}")
+        else:
+            print(f"[DEBUG] label type = {type(label)} → {label}")
+        # ======== 打印结束 =========
 
+        # ---- 针对 ESMC 等 token-level 输出的自动聚合 ----
+        if logits.ndim == 3:
+            # 自动池化到序列级: [B, L, C] → [B, C]
+            print(f"[DEBUG] Detected token-level logits → mean pooling along sequence dimension (dim=1)")
+            logits = logits.mean(dim=1)
+            print(f"[DEBUG] After pooling, logits.shape = {tuple(logits.shape)}")
+
+        # ---- label 维度修正 ----
+        if label.ndim > 1:
+            print(f"[DEBUG] squeezing label from shape {tuple(label.shape)}")
+            label = label.squeeze(-1)
+
+        # ---- 计算交叉熵损失 ----
         loss = cross_entropy(logits, label)
 
-        # Update metrics
+        # ---- 更新指标 ----
         for metric in self.metrics[stage].values():
             metric.update(logits.detach(), label)
 
+        # ---- 记录日志 ----
         if stage == "train":
             log_dict = self.get_log_dict("train")
             log_dict["train_loss"] = loss
             self.log_info(log_dict)
-
-            # Reset train metric
             self.reset_metrics("train")
 
         return loss
