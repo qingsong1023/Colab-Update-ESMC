@@ -35,7 +35,7 @@ class SaprotClassificationDataset(LMDBDataset):
         # isolate ESMC model (do not load EsmTokenizer)
         # ==============================================================
         if tokenizer and ("esmc" in str(tokenizer).lower() or "evolutionaryscale" in str(tokenizer).lower()):
-            print("[SaProtClassificationDataset] Detected ESMC backbone — skipping EsmTokenizer loading.")
+            print("[SaProtClassificationDataset] Detected ESMC backbone skipping EsmTokenizer loading.")
             self.tokenizer = None
         else:
             self.tokenizer = EsmTokenizer.from_pretrained(tokenizer)

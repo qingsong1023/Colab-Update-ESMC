@@ -23,20 +23,28 @@ class SaprotClassificationModel(SaprotBaseModel):
 
     def forward(self, inputs, coords=None):
         # ==============================================================
-        # Step 0 - Resolve true model class
+        # Step 0 - Resolve true model class (debug unwrap)
         # ==============================================================
         model_ref = self.model
         unwrap_depth = 0
+        print("[DEBUG] ===== Start unwrapping model =====")
+
         while hasattr(model_ref, "base_model") or hasattr(model_ref, "model"):
             unwrap_depth += 1
+            cls_name = model_ref.__class__.__name__
+            print(f"[DEBUG] Unwrapped level {unwrap_depth}: {cls_name}")
             if hasattr(model_ref, "base_model"):
                 model_ref = model_ref.base_model
             elif hasattr(model_ref, "model"):
                 model_ref = model_ref.model
             else:
                 break
-
-        real_cls_name = model_ref.__class__.__name__.lower()
+            if unwrap_depth > 50:
+                print(f"[DEBUG] WARNING: unwrap depth > 50, may indicate recursive model structure!")
+                break
+                
+        print(f"[DEBUG] Final resolved model class: {model_ref.__class__.__name__}")
+        print("[DEBUG] ===== End unwrapping model =====")
         # ==============================================================
 
         # ==============================================================
