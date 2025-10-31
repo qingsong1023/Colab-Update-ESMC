@@ -110,38 +110,6 @@ class SaprotBaseModel(AbstractModel):
                     raise
                 # After LoRA model is initialized, add trainable parameters to optimizer)
                 self.init_optimizers()
-
-                # ==========================================================
-                # ✅ FIX: restore the tokenizer lost after PEFT / LoRA wrapping
-                # ==========================================================
-                try:
-                    def reassign_tokenizer(m, tokenizer):
-                        """递归向里找到 ESMC 层并重新挂载 tokenizer"""
-                        if tokenizer is None:
-                            print("[WARN] No tokenizer found in SaprotBaseModel; skipping reassign.")
-                            return
-
-                        level = m
-                        for depth in range(5):  # 最多向下穿5层
-                            if hasattr(level, "model"):
-                                level = level.model
-                            else:
-                                break
-                        # 找到 ESMC 层后，如果没有 tokenizer，则注入
-                        if hasattr(level, "tokenizer"):
-                            if level.tokenizer is None:
-                                level.tokenizer = tokenizer
-                                print(f"[LoRA-Patch] ✅ Reassigned tokenizer to inner model {type(level)}")
-                            else:
-                                print("[LoRA-Patch] tokenizer already present in inner model")
-                        else:
-                            print("[LoRA-Patch] No tokenizer attribute found in inner model")
-                    
-                    reassign_tokenizer(self.model, getattr(self, "tokenizer", None))
-                except Exception as e:
-                    print(f"[LoRA-Patch::TokenizerReassignError] {e}")
-                # ==========================================================
-
                 return
             # --- new end ---
             
