@@ -170,6 +170,17 @@ class SaprotClassificationModel(SaprotBaseModel):
                 raise TypeError(f"[SaProtClassificationModel] logits must be Tensor, got {type(logits)}")
 
         label = labels['labels']
+
+        # ======== 打印调试信息 =========
+        print("\n[DEBUG] SHAPE CHECK before loss")
+        print(f"[DEBUG] logits.shape = {tuple(logits.shape)}")
+        if isinstance(label, torch.Tensor):
+            print(f"[DEBUG] label.shape = {tuple(label.shape)}, dtype = {label.dtype}")
+            print(f"[DEBUG] label example: {label[:5].cpu().tolist()}")
+        else:
+            print(f"[DEBUG] label type = {type(label)} → {label}")
+        # ======== 调试信息结束 =========
+
         loss = cross_entropy(logits, label)
 
         # Update metrics
