@@ -8,7 +8,6 @@ from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from model.model_interface import ModelInterface
 from dataset.data_interface import DataInterface
 from pytorch_lightning.strategies import DDPStrategy, DeepSpeedStrategy, Strategy
-from pytorch_lightning.plugins.precision import MixedPrecisionPlugin
 
 ################################################################################
 ################################ load model ####################################
@@ -181,9 +180,9 @@ def load_trainer(config):
     else:
         trainer_config.logger = False
 
-    fp16_plugin = MixedPrecisionPlugin(precision="16-mixed", device="cuda")
-
-    print("[DEBUG] Force override: using MixedPrecisionPlugin(fp16)")
+    if "precision" in trainer_config:
+        print(f"[DEBUG] Removing old precision={trainer_config['precision']} from Trainer config")
+        trainer_config.pop("precision")
 
     # Initialize strategy
     # strategy = load_strategy(trainer_config.pop('strategy'))
@@ -191,4 +190,4 @@ def load_trainer(config):
     if "strategy" in trainer_config:
         trainer_config.pop("strategy")
     
-    return pl.Trainer(**trainer_config, plugins=[fp16_plugin], callbacks=[], use_distributed_sampler=False)
+    return pl.Trainer(**trainer_config, callbacks=[], use_distributed_sampler=False)
