@@ -24,7 +24,6 @@ class SaprotClassificationModel(SaprotBaseModel):
     def forward(self, inputs, coords=None):
         # ==============================================================
         # Step 0 - Resolve true model class
-        #   (unwrap PEFT / LoRA wrappers to get real class name)
         # ==============================================================
         model_ref = self.model
         unwrap_depth = 0
@@ -39,7 +38,7 @@ class SaprotClassificationModel(SaprotBaseModel):
 
         real_cls_name = model_ref.__class__.__name__.lower()
         # ==============================================================
-        
+
         # ==============================================================
         # Step 1 - ESMC / EvolutionaryScale Models
         # ==============================================================
@@ -69,7 +68,10 @@ class SaprotClassificationModel(SaprotBaseModel):
             if "sequence_tokens" not in inputs and "input_ids" in inputs:
                 inputs["sequence_tokens"] = inputs["input_ids"]
 
-            outputs = self.model(**inputs)
+            use_bf16 = torch.cuda.is_bf16_supported()
+            dtype_ = torch.bfloat16 if use_bf16 else torch.float16
+            with torch.autocast("cuda", dtype=dtype_):
+                outputs = self.model(**inputs)
             return outputs.get("logits") if isinstance(outputs, dict) else outputs
         # ==============================================================
 
