@@ -47,16 +47,16 @@ class SaprotClassificationModel(SaprotBaseModel):
             print(f"[DEBUG] Input keys before mapping: {list(inputs.keys())}")
 
             # ==============================================================
-            # ✅ 对 ESMC / EvolutionaryScale 类型模型进行隔离处理
+            # 对 ESMC / EvolutionaryScale 类型模型进行隔离处理
             # ==============================================================
             if "esmc" in real_cls_name or "evolutionaryscale" in real_cls_name:
                 print("[DEBUG] Detected ESMC model — expecting tokenized Tensor input.")
 
-                # ---- STEP 1️⃣: 兼容旧字段 “sequences” (可能是 list[str] / Tensor)
+                # ---- STEP 1: 兼容旧字段 “sequences” (可能是 list[str] / Tensor)
                 if "sequences" in inputs and "input_ids" not in inputs and "sequence_tokens" not in inputs:
                     seq_obj = inputs["sequences"]
 
-                    # 🧩 判断类型: 如果是 list[str]，自动调用 tokenizer
+                    # 判断类型: 如果是 list[str]，自动调用 tokenizer
                     if isinstance(seq_obj, (list, tuple)) and len(seq_obj) > 0 and isinstance(seq_obj[0], str):
                         print("[DEBUG] 'sequences' detected as list of str → Auto-tokenizing with model.tokenizer() ...")
                         tokens = self.model.tokenizer(
@@ -76,31 +76,31 @@ class SaprotClassificationModel(SaprotBaseModel):
                             f"[SaProtClassificationModel] Unexpected data type under 'sequences': {type(seq_obj)}"
                         )
 
-                # ---- STEP 2️⃣: 检查必须有 tokenized tensor
+                # ---- STEP 2: 检查必须有 tokenized tensor
                 if "input_ids" not in inputs and "sequence_tokens" not in inputs:
                     raise ValueError(
                         "[SaProtClassificationModel] ESMC forward expects tokenized tensor under 'input_ids' "
                         "(please call esm_model.tokenizer() or alphabet.batch_converter() before forward)."
                     )
 
-                # ---- STEP 3️⃣: 向后兼容 'sequence_tokens'
+                # ---- STEP3: 向后兼容 'sequence_tokens'
                 if "sequence_tokens" not in inputs and "input_ids" in inputs:
                     inputs["sequence_tokens"] = inputs["input_ids"]
 
                 # ==============================================================
-                # 🚀 真正地 forward 调用模型
+                # 真正地 forward 调用模型
                 # ==============================================================
                 outputs = self.model(**inputs)
                 print("[DEBUG] Forwarded through ESMC successfully")
 
-                # ---- STEP 4️⃣: 返回统一输出
+                # ---- STEP 4: 返回统一输出
                 if isinstance(outputs, dict):
                     print(f"[DEBUG] Output keys: {list(outputs.keys())}")
                     return outputs.get("logits", list(outputs.values())[0])
                 return outputs
 
             # ==============================================================
-            # 📦 非 ESMC 模型：保持原有逻辑，不修改
+            # 非 ESMC 模型：保持原有逻辑，不修改
             # ==============================================================
             else:
                 print("[DEBUG] Not an ESMC model, using default logic.")
@@ -130,6 +130,14 @@ class SaprotClassificationModel(SaprotBaseModel):
         return logits
 
     def loss_func(self, stage, logits, labels):
+        if not isinstance(logits, torch.Tensor):
+            if hasattr(logits, "logits"):
+                logits = logits.logits
+            elif isinstance(logits, dict) and "logits" in logits:
+                logits = logits["logits"]
+            else:
+                raise TypeError(f"[SaProtClassificationModel] logits must be Tensor, got {type(logits)}")
+
         label = labels['labels']
         loss = cross_entropy(logits, label)
 
