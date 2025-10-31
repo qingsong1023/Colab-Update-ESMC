@@ -25,29 +25,28 @@ class SaprotClassificationModel(SaprotBaseModel):
         # ==============================================================
         # add esmc start
         # ==============================================================
+        model_cls_name = self.model.__class__.__name__.lower()
         # Step 0 - Resolve true model class (debug unwrap)
-        model_ref = self.model
-        unwrap_depth = 0
-        print("[DEBUG] ===== Start unwrapping model =====")
+        if any(k in model_cls_name for k in ["esmc", "evolutionaryscale"]):
+            # ==============================================================  
+            # [Special Handling for ESMC Models]
+            # ==============================================================  
+            print("[DEBUG] Detected ESMC model, entering special forward path.")
+            model_ref = self.model
+            unwrap_depth = 0
+            while hasattr(model_ref, "base_model") or hasattr(model_ref, "model"):
+                unwrap_depth += 1
+                print(f"[DEBUG] Unwrapping level {unwrap_depth}: {model_ref.__class__.__name__}")
+                if hasattr(model_ref, "base_model"):
+                    model_ref = model_ref.base_model
+                elif hasattr(model_ref, "model"):
+                    model_ref = model_ref.model
+                else:
+                    break
+            real_cls_name = model_ref.__class__.__name__.lower()
+            print(f"[DEBUG] Final resolved class: {real_cls_name}")
 
-        while hasattr(model_ref, "base_model") or hasattr(model_ref, "model"):
-            unwrap_depth += 1
-            cls_name = model_ref.__class__.__name__
-            print(f"[DEBUG] Unwrapped level {unwrap_depth}: {cls_name}")
-            if hasattr(model_ref, "base_model"):
-                model_ref = model_ref.base_model
-            elif hasattr(model_ref, "model"):
-                model_ref = model_ref.model
-            else:
-                break
-            if unwrap_depth > 50:
-                print(f"[DEBUG] WARNING: unwrap depth > 50, may indicate recursive model structure!")
-                break
-        print(f"[DEBUG] Final resolved model class: {model_ref.__class__.__name__}")
-        print("[DEBUG] ===== End unwrapping model =====")
-
-        # Step 1 - ESMC / EvolutionaryScale Models
-        if any(k in real_cls_name for k in ["esmc", "evolutionaryscale"]):
+            # Step 1 - ESMC / EvolutionaryScale Models
             seq_obj = inputs.get("sequences", None)
             # ---- STEP 1.1: backward compatibility for 'sequences'
             if seq_obj is not None and "input_ids" not in inputs and "sequence_tokens" not in inputs:
