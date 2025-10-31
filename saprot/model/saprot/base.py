@@ -253,6 +253,8 @@ class SaprotBaseModel(AbstractModel):
                             print(f"[Patch Applied] Removed EsmSequenceTokenizer.{bad_attr} (read-only property).")
                     except Exception as e:
                         print(f"[Patch Skipped] {bad_attr}: {e}")
+            except Exception as e:
+                print("[Tokenizer Patch Warning]", e)
 
             # ==========================================================
             # (2) 正确加载路径（适用于 esm>=3.0）
