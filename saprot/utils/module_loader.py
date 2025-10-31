@@ -178,6 +178,8 @@ def load_trainer(config):
         trainer_config.logger = load_wandb(config)
     else:
         trainer_config.logger = False
+
+    trainer_config["precision"] = "16-mixed"
     
     # Initialize strategy
     # strategy = load_strategy(trainer_config.pop('strategy'))

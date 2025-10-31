@@ -68,10 +68,7 @@ class SaprotClassificationModel(SaprotBaseModel):
             if "sequence_tokens" not in inputs and "input_ids" in inputs:
                 inputs["sequence_tokens"] = inputs["input_ids"]
 
-            use_bf16 = torch.cuda.is_bf16_supported()
-            dtype_ = torch.bfloat16 if use_bf16 else torch.float16
-            with torch.autocast("cuda", dtype=dtype_):
-                outputs = self.model(**inputs)
+            outputs = self.model(**inputs)
             return outputs.get("logits") if isinstance(outputs, dict) else outputs
         # ==============================================================
 
