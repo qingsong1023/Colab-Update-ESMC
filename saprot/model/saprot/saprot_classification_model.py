@@ -22,39 +22,32 @@ class SaprotClassificationModel(SaprotBaseModel):
         return {f"{stage}_acc": torchmetrics.Accuracy()}
 
     def forward(self, inputs, coords=None):
-        # ==============================================================
+        # ==============================================================  
         # add esmc start
-        # ==============================================================
+        # ==============================================================  
         model_cls_name = self.model.__class__.__name__.lower()
-        # Step 0 - Resolve true model class (debug unwrap)
-        if any(k in model_cls_name for k in ["esmc", "evolutionaryscale"]):
-            # ==============================================================  
-            # [Special Handling for ESMC Models]
-            # ==============================================================  
-            print("[DEBUG] Detected ESMC model, entering special forward path.")
+        
+        # Step 0 - 仅对最外层类名包含 "esmc" 的进入特殊处理
+        if "esmc" in model_cls_name or "evolutionaryscale" in model_cls_name:
+            print("[DEBUG] Detected ESMC model (outer class), entering special forward path.")
             model_ref = self.model
             unwrap_depth = 0
             while hasattr(model_ref, "base_model") or hasattr(model_ref, "model"):
                 unwrap_depth += 1
-                print(f"[DEBUG] Unwrapping level {unwrap_depth}: {model_ref.__class__.__name__}")
-                if hasattr(model_ref, "base_model"):
-                    model_ref = model_ref.base_model
-                elif hasattr(model_ref, "model"):
-                    model_ref = model_ref.model
-                else:
+                cls_name = model_ref.__class__.__name__
+                print(f"[DEBUG] Unwrapping level {unwrap_depth}: {cls_name}")
+                model_ref = getattr(model_ref, "base_model", getattr(model_ref, "model", model_ref))
+                if unwrap_depth > 50:
+                    print("[DEBUG] WARNING: unwrap depth > 50, may indicate recursive model structure!")
                     break
-            real_cls_name = model_ref.__class__.__name__.lower()
-            print(f"[DEBUG] Final resolved class: {real_cls_name}")
 
-            # Step 1 - ESMC / EvolutionaryScale Models
-            print("[DEBUG] Incoming inputs keys:", list(inputs.keys()))
-            print("[DEBUG] sequences type:", type(inputs.get("sequences", None)))
-            print("[DEBUG] input_ids:", type(inputs.get("input_ids", None)), "sequence_tokens:", type(inputs.get("sequence_tokens", None)))
+            print(f"[DEBUG] Final resolved ESMC class: {model_ref.__class__.__name__}")
+
+            # Step 1 - 处理 sequences -> input_ids / sequence_tokens
             seq_obj = inputs.get("sequences", None)
-            # ---- STEP 1.1: backward compatibility for 'sequences'
             if seq_obj is not None and "input_ids" not in inputs and "sequence_tokens" not in inputs:
                 if isinstance(seq_obj, (list, tuple)) and len(seq_obj) > 0 and isinstance(seq_obj[0], str):
-                    tokens = self.model.tokenizer(seq_obj, return_tensors="pt", padding=True, truncation=True)
+                    tokens = model_ref.tokenizer(seq_obj, return_tensors="pt", padding=True, truncation=True)
                     device_ = next(self.model.parameters()).device
                     inputs["input_ids"] = tokens["input_ids"].to(device_)
                     inputs["attention_mask"] = tokens["attention_mask"].to(device_)
@@ -62,21 +55,18 @@ class SaprotClassificationModel(SaprotBaseModel):
                     inputs["sequence_tokens"] = seq_obj
                 else:
                     raise TypeError(f"[SaProtClassificationModel] Unexpected type under 'sequences': {type(seq_obj)}")
-            # ---- STEP 1.2: ensure we actually have tokens
-            if "input_ids" not in inputs and "sequence_tokens" not in inputs:
-                raise ValueError(
-                    "[SaProtClassificationModel] ESMC forward requires tokenized tensors "
-                    "under 'input_ids' or 'sequence_tokens'."
-                )
-            # ---- STEP 1.3: unify field names
+
+            # 确保 sequence_tokens 一定存在
             if "sequence_tokens" not in inputs and "input_ids" in inputs:
                 inputs["sequence_tokens"] = inputs["input_ids"]
+
             print("[DEBUG] Before model forward, sequence_tokens type:", type(inputs.get("sequence_tokens", None)))
+
             outputs = self.model(**inputs)
             return outputs.get("logits") if isinstance(outputs, dict) else outputs
-        # ==============================================================
-        # add esmc end 
-        # ==============================================================
+        # ==============================================================  
+        # add esmc end
+        # ==============================================================  
 
         if coords is not None:
             inputs = self.add_bias_feature(inputs, coords)
