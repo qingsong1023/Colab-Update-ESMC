@@ -132,23 +132,19 @@ class SaprotClassificationModel(SaprotBaseModel):
             print("\n[DEBUG] loss_func called with non-Tensor logits")
             print("[DEBUG] type:", type(logits))
             try:
-                # 如果是一个 dataclass 或 namedtuple，有 __dict__
                 if hasattr(logits, "__dict__"):
                     print("[DEBUG] __dict__ keys:", list(logits.__dict__.keys()))
-                # 如果是普通命名元组，打印 _fields
                 elif hasattr(logits, "_fields"):
                     print("[DEBUG] _fields:", logits._fields)
-                # 如果是 dict
                 elif isinstance(logits, dict):
                     print("[DEBUG] dict keys:", list(logits.keys()))
                 else:
-                    # 最后兜底打印所有可访问属性
                     print("[DEBUG] dir():", [k for k in dir(logits) if not k.startswith("_")])
             except Exception as e:
                 print("[DEBUG] Failed to inspect logits:", e)
         # ======== Debug end ========
 
-        # 暂时先不要 raise，让它真正报错前能打印出结构
+        # ---- 自动提取 logits ----
         if not isinstance(logits, torch.Tensor):
             if hasattr(logits, "logits"):
                 logits = logits.logits
@@ -165,13 +161,14 @@ class SaprotClassificationModel(SaprotBaseModel):
                 try:
                     logits = logits[0]
                 except Exception:
-                    raise TypeError(f"[SaProtClassificationModel] Unknown ESMCOutput structure: {logits}")
+                    raise TypeError(f"[SaProtClassificationModel] Unknown output structure: {logits}")
             else:
                 raise TypeError(f"[SaProtClassificationModel] logits must be Tensor, got {type(logits)}")
 
-        label = labels['labels']
+        # ---- 提取标签 ----
+        label = labels["labels"]
 
-        # ======== 打印调试信息 =========
+        # ======== 打印形状 =========
         print("\n[DEBUG] SHAPE CHECK before loss")
         print(f"[DEBUG] logits.shape = {tuple(logits.shape)}")
         if isinstance(label, torch.Tensor):
@@ -179,20 +176,32 @@ class SaprotClassificationModel(SaprotBaseModel):
             print(f"[DEBUG] label example: {label[:5].cpu().tolist()}")
         else:
             print(f"[DEBUG] label type = {type(label)} → {label}")
-        # ======== 调试信息结束 =========
+        # ======== 打印结束 =========
 
+        # ---- 针对 ESMC 等 token-level 输出的自动聚合 ----
+        if logits.ndim == 3:
+            # 自动池化到序列级: [B, L, C] → [B, C]
+            print(f"[DEBUG] Detected token-level logits → mean pooling along sequence dimension (dim=1)")
+            logits = logits.mean(dim=1)
+            print(f"[DEBUG] After pooling, logits.shape = {tuple(logits.shape)}")
+
+        # ---- label 维度修正 ----
+        if label.ndim > 1:
+            print(f"[DEBUG] squeezing label from shape {tuple(label.shape)}")
+            label = label.squeeze(-1)
+
+        # ---- 计算交叉熵损失 ----
         loss = cross_entropy(logits, label)
 
-        # Update metrics
+        # ---- 更新指标 ----
         for metric in self.metrics[stage].values():
             metric.update(logits.detach(), label)
 
+        # ---- 记录日志 ----
         if stage == "train":
             log_dict = self.get_log_dict("train")
             log_dict["train_loss"] = loss
             self.log_info(log_dict)
-
-            # Reset train metrics
             self.reset_metrics("train")
 
         return loss
