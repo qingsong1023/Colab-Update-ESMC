@@ -246,11 +246,13 @@ class SaprotBaseModel(AbstractModel):
             try:
                 import esm.tokenization.sequence_tokenizer as stn
                 tok_cls = getattr(stn, "EsmSequenceTokenizer", None)
-                if tok_cls and isinstance(getattr(tok_cls, "cls_token", None), property):
-                    delattr(tok_cls, "cls_token")
-                    print("[Patch Applied] Removed EsmSequenceTokenizer.cls_token to fix ESMC conflict.")
-            except Exception as e:
-                print("[Patch Skipped] ESMC tokenizer patch failed:", e)
+                for bad_attr in ["cls_token", "pad_token", "sep_token", "mask_token"]:
+                    try:
+                        if tok_cls and isinstance(getattr(tok_cls, bad_attr, None), property):
+                            delattr(tok_cls, bad_attr)
+                            print(f"[Patch Applied] Removed EsmSequenceTokenizer.{bad_attr} (read-only property).")
+                    except Exception as e:
+                        print(f"[Patch Skipped] {bad_attr}: {e}")
 
             # ==========================================================
             # (2) 正确加载路径（适用于 esm>=3.0）
