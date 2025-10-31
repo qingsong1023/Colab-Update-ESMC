@@ -47,6 +47,9 @@ class SaprotClassificationModel(SaprotBaseModel):
             print(f"[DEBUG] Final resolved class: {real_cls_name}")
 
             # Step 1 - ESMC / EvolutionaryScale Models
+            print("[DEBUG] Incoming inputs keys:", list(inputs.keys()))
+            print("[DEBUG] sequences type:", type(inputs.get("sequences", None)))
+            print("[DEBUG] input_ids:", type(inputs.get("input_ids", None)), "sequence_tokens:", type(inputs.get("sequence_tokens", None)))
             seq_obj = inputs.get("sequences", None)
             # ---- STEP 1.1: backward compatibility for 'sequences'
             if seq_obj is not None and "input_ids" not in inputs and "sequence_tokens" not in inputs:
@@ -68,6 +71,7 @@ class SaprotClassificationModel(SaprotBaseModel):
             # ---- STEP 1.3: unify field names
             if "sequence_tokens" not in inputs and "input_ids" in inputs:
                 inputs["sequence_tokens"] = inputs["input_ids"]
+            print("[DEBUG] Before model forward, sequence_tokens type:", type(inputs.get("sequence_tokens", None)))
             outputs = self.model(**inputs)
             return outputs.get("logits") if isinstance(outputs, dict) else outputs
         # ==============================================================
