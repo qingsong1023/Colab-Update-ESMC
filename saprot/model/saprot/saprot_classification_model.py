@@ -22,81 +22,40 @@ class SaprotClassificationModel(SaprotBaseModel):
         return {f"{stage}_acc": torchmetrics.Accuracy()}
 
     def forward(self, inputs, coords=None):
-        # ==============================================================
-        # isolate ESMC model (handle LoRA / PEFT wrapping)
-        # ==============================================================
-        try:
-            model_ref = self.model 
-            unwrap_depth = 0
-            while hasattr(model_ref, "base_model") or hasattr(model_ref, "model"):
-                unwrap_depth += 1
-                if hasattr(model_ref, "base_model"):
-                    model_ref = model_ref.base_model
-                elif hasattr(model_ref, "model"):
-                    model_ref = model_ref.model
-                else:
-                    break
-
-            real_cls_name = model_ref.__class__.__name__.lower()
-
-            if "esmc" in real_cls_name or "evolutionaryscale" in real_cls_name:
-                # ---- STEP 1: Backward compatibility for the field 'sequences' (may be list[str] / Tensor)
-                if "sequences" in inputs and "input_ids" not in inputs and "sequence_tokens" not in inputs:
-                    seq_obj = inputs["sequences"]
-
-                    # Determine input type: if it's list[str], automatically call tokenizer
-                    if isinstance(seq_obj, (list, tuple)) and len(seq_obj) > 0 and isinstance(seq_obj[0], str):
-                        tokens = self.model.tokenizer(
-                            seq_obj, return_tensors='pt', padding=True, truncation=True
-                        )
-                        device_ = next(self.model.parameters()).device
-                        inputs["input_ids"] = tokens["input_ids"].to(device_)
-                        inputs["attention_mask"] = tokens["attention_mask"].to(device_)
-
-                    elif isinstance(seq_obj, torch.Tensor):
-                        inputs["sequence_tokens"] = seq_obj
-                    else:
-                        raise TypeError(
-                            f"[SaProtClassificationModel] Unexpected data type under 'sequences': {type(seq_obj)}"
-                        )
-
-                # ---- STEP 2: Ensure the presence of tokenized tensors
-                if "input_ids" not in inputs and "sequence_tokens" not in inputs:
-                    raise ValueError(
-                        "[SaProtClassificationModel] ESMC forward expects tokenized tensor under 'input_ids' "
-                        "(please call esm_model.tokenizer() or alphabet.batch_converter() before forward)."
-                    )
-
-                # ---- STEP 3: Backward compatibility for 'sequence_tokens'
-                if "sequence_tokens" not in inputs and "input_ids" in inputs:
-                    inputs["sequence_tokens"] = inputs["input_ids"]
-
-                outputs = self.model(**inputs)
-                if isinstance(outputs, dict):
-                    return outputs.get("logits", list(outputs.values())[0])
-                return outputs
-        except Exception:
-            pass
-        # ==============================================================
-        # end isolate ESMC model
-        # ==============================================================
-
-        if coords is not None:
-            inputs = self.add_bias_feature(inputs, coords)
-
-        # If backbone is frozen, the embedding will be the average of all residues
-        if self.freeze_backbone:
-            repr = torch.stack(self.get_hidden_states_from_dict(inputs, reduction="mean"))
-            x = self.model.classifier.dropout(repr)
-            x = self.model.classifier.dense(x)
-            x = torch.tanh(x)
-            x = self.model.classifier.dropout(x)
-            logits = self.model.classifier.out_proj(x)
+        real_cls_name = self.model.__class__.__name__.lower()
+        # --------------------------------------------------------------
+        # 1. 如果模型是 ESMC / EvolutionaryScale
+        # --------------------------------------------------------------
+        if "esmc" in real_cls_name or "evolutionaryscale" in real_cls_name:
+            seq_obj = inputs.get("sequences", None)
+            if seq_obj is not None and "input_ids" not in inputs:
+                if isinstance(seq_obj, (list, tuple)) and isinstance(seq_obj[0], str):
+                    tokens = self.model.tokenizer(seq_obj, return_tensors='pt', padding=True, truncation=True)
+                    device_ = next(self.model.parameters()).device
+                    inputs["input_ids"] = tokens["input_ids"].to(device_)
+                    inputs["attention_mask"] = tokens["attention_mask"].to(device_)
+                elif isinstance(seq_obj, torch.Tensor):
+                    inputs["sequence_tokens"] = seq_obj
+            outputs = self.model(**inputs)
+            return outputs.get("logits") if isinstance(outputs, dict) else outputs
 
         else:
-            logits = self.model(**inputs).logits
-        
-        return logits
+            if coords is not None:
+                inputs = self.add_bias_feature(inputs, coords)
+
+            # If backbone is frozen, the embedding will be the average of all residues
+            if self.freeze_backbone:
+                repr = torch.stack(self.get_hidden_states_from_dict(inputs, reduction="mean"))
+                x = self.model.classifier.dropout(repr)
+                x = self.model.classifier.dense(x)
+                x = torch.tanh(x)
+                x = self.model.classifier.dropout(x)
+                logits = self.model.classifier.out_proj(x)
+                
+            else:
+                logits = self.model(**inputs).logits
+
+            return logits
 
     def loss_func(self, stage, logits, labels):
         # ======== Debug: print ESMC output structure ========
