@@ -34,7 +34,7 @@ class SaprotBaseModel(AbstractModel):
                  **kwargs):
         """
         Args:
-            task: Task name。
+            task: Task name
 
             config_path: Path to the config file of huggingface esm model
 
@@ -242,44 +242,37 @@ class SaprotBaseModel(AbstractModel):
         if is_esmc_model:
             print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
 
-            # (仍然保留对 EsmSequenceTokenizer 的防御性 patch)
+            # ---- (1) 防御性 patch: 删除 cls_token 只读属性 ----
             try:
                 import esm.tokenization.sequence_tokenizer as stn
                 tok_cls = getattr(stn, "EsmSequenceTokenizer", None)
-                if tok_cls is not None and isinstance(getattr(type(tok_cls), "cls_token", None), property):
+                if tok_cls and isinstance(getattr(tok_cls, "cls_token", None), property):
                     delattr(tok_cls, "cls_token")
                     print("[Patch Applied] Removed EsmSequenceTokenizer.cls_token to fix ESMC conflict.")
             except Exception as e:
                 print("[Patch Skipped] ESMC tokenizer patch failed:", e)
 
             # ==========================================================
-            # 修改开始：手动加载 tokenizer 并禁用自动加载
+            # (2) 正确加载路径（适用于 esm>=3.0）
             # ==========================================================
             from esm.models.esmc import ESMC
-            from esm.sdk.api import ESMTokenizer, ESMProtein, LogitsConfig
+            from esm.tokenization.sequence_tokenizer import EsmSequenceTokenizer
+            from esm.sdk.api import ESMProtein, LogitsConfig
             from types import SimpleNamespace
 
             try:
-                print("[SaProtBaseModel] Manually loading ESMC tokenizer...")
-                self.tokenizer = ESMTokenizer.from_pretrained("esmc_300m")
-
-                print("[SaProtBaseModel] Loading ESMC backbone model (without auto tokenizer)...")
-                self.model = ESMC.from_pretrained("esmc_300m", load_tokenizer=False)
-
-                # tokenizer
-                self.model.tokenizer = self.tokenizer
-                print(f"[SaProtBaseModel] ✅ Attached custom tokenizer: {type(self.tokenizer)}")
+                print("[SaProtBaseModel] Loading ESMC backbone model (auto tokenizer)...")
+                self.model = ESMC.from_pretrained("esmc_300m")
+                self.tokenizer = self.model.tokenizer  # 自动自带 EsmSequenceTokenizer
+                print(f"[SaProtBaseModel] Attached tokenizer: {type(self.tokenizer)}")
 
             except Exception as e:
-                print(f"[SaProtBaseModel::ESMCManualLoadError] Failed to manually load ESMC: {e}")
+                print(f"[SaProtBaseModel::ESMCLoadError] Failed to load ESMC model: {e}")
                 raise
-            # ==========================================================
-            # 修改结束：后面所有逻辑保持不动
-            # ==========================================================
 
-            import esm.tokenization as esm_tok
-            esm_tok.get_esmc_model_tokenizers = esm_tok.get_esmc_model_tokenizers
-
+            # ==========================================================
+            # (3) 后续逻辑保持不动
+            # ==========================================================
             if not hasattr(self.model, "config"):
                 self.model.config = SimpleNamespace(use_return_dict=True,
                                                     hidden_size=getattr(self.model, "hidden_size", 1024))
