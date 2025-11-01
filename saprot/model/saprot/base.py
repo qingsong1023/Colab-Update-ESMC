@@ -204,7 +204,7 @@ class SaprotBaseModel(AbstractModel):
             # After LoRA model is initialized, add trainable parameters to optimizer)
             self.init_optimizers()
     
-    def initialize_model(self):
+def initialize_model(self):
         """
         Initialize backbone model according to base_model name (ESM2 / ESMC / ProtBert / etc).
         """
@@ -212,6 +212,9 @@ class SaprotBaseModel(AbstractModel):
         # New branch: detect and load EvolutionaryScale ESMC
         # ==========================================================
         import os
+        # 导入 SimpleNamespace
+        from types import SimpleNamespace
+        
         cfg_path = os.path.basename(str(getattr(self, "config_path", ""))).lower()
         is_esmc_model = False
 
@@ -239,8 +242,7 @@ class SaprotBaseModel(AbstractModel):
             from esm.models.esmc import ESMC
             from esm.tokenization.sequence_tokenizer import EsmSequenceTokenizer
             from esm.sdk.api import ESMProtein, LogitsConfig
-            from types import SimpleNamespace
-
+            
             try:
                 print("Loading ESMC backbone model (auto tokenizer)...")
                 self.model = ESMC.from_pretrained("esmc_300m")
@@ -253,10 +255,11 @@ class SaprotBaseModel(AbstractModel):
 
             # Compatibility fix: .config if it doesn't exist
             if not hasattr(self.model, "config"):
-                    self.model.config = {
-                        "use_return_dict": True,
-                        "hidden_size": getattr(self.model, "hidden_size", 1024)
-                    }
+                    # 使用 SimpleNamespace 而不是 dict
+                    self.model.config = SimpleNamespace(
+                        use_return_dict=True,
+                        hidden_size=getattr(self.model, "hidden_size", 1024)
+                    )
                     print("Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
 
             # Freeze backbone parameters if requested
