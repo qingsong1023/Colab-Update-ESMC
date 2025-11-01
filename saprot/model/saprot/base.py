@@ -86,7 +86,9 @@ class SaprotBaseModel(AbstractModel):
             assert self.lora_kwargs.num_lora >= len(config_list), ("The number of LoRA models should be greater than or "
                                                                 "equal to the number of weight files.")
             
-            # --- new: detect if esmc backbone ---
+            # ==========================================================
+            # New: detect if esmc backbone
+            # ==========================================================
             import os
             cfg_path = os.path.basename(str(getattr(self, "config_path", ""))).lower()
             is_esmc_model = False
@@ -111,7 +113,9 @@ class SaprotBaseModel(AbstractModel):
                 # After LoRA model is initialized, add trainable parameters to optimizer)
                 self.init_optimizers()
                 return
-            # --- new end ---
+            # ==========================================================
+            # New end : detect if esmc backbone
+            # ==========================================================
             
             for i in range(self.lora_kwargs.num_lora):
                 adapter_name = f"adapter_{i}" if self.lora_kwargs.num_lora > 1 else "default"
@@ -204,9 +208,8 @@ class SaprotBaseModel(AbstractModel):
         """
         Initialize backbone model according to base_model name (ESM2 / ESMC / ProtBert / etc).
         """
-
         # ==========================================================
-        # (A) New branch: detect and load EvolutionaryScale ESMC
+        # New branch: detect and load EvolutionaryScale ESMC
         # ==========================================================
         import os
         cfg_path = os.path.basename(str(getattr(self, "config_path", ""))).lower()
@@ -216,9 +219,9 @@ class SaprotBaseModel(AbstractModel):
             is_esmc_model = True
 
         if is_esmc_model:
-            print("[SaProtBaseModel] Detected ESMC backbone: using EvolutionaryScale SDK loader.")
+            print("Detected ESMC backbone: using EvolutionaryScale SDK loader.")
 
-            # ---- (1) 防御性 patch: 删除 cls_token 只读属性 ----
+             # Defensive patch: remove read-only attributes from EsmSequenceTokenizer
             try:
                 import esm.tokenization.sequence_tokenizer as stn
                 tok_cls = getattr(stn, "EsmSequenceTokenizer", None)
@@ -232,32 +235,31 @@ class SaprotBaseModel(AbstractModel):
             except Exception as e:
                 print("[Tokenizer Patch Warning]", e)
 
-            # ==========================================================
-            # (2) 正确加载路径（适用于 esm>=3.0）
-            # ==========================================================
+            # Correct loading path (compatible with esm>=3.0)
             from esm.models.esmc import ESMC
             from esm.tokenization.sequence_tokenizer import EsmSequenceTokenizer
             from esm.sdk.api import ESMProtein, LogitsConfig
             from types import SimpleNamespace
 
             try:
-                print("[SaProtBaseModel] Loading ESMC backbone model (auto tokenizer)...")
+                print("Loading ESMC backbone model (auto tokenizer)...")
                 self.model = ESMC.from_pretrained("esmc_300m")
-                self.tokenizer = self.model.tokenizer  # 自动自带 EsmSequenceTokenizer
-                print(f"[SaProtBaseModel] Attached tokenizer: {type(self.tokenizer)}")
+                self.tokenizer = self.model.tokenizer
+                print(f"Attached tokenizer: {type(self.tokenizer)}")
 
             except Exception as e:
-                print(f"[SaProtBaseModel::ESMCLoadError] Failed to load ESMC model: {e}")
+                print(f"Failed to load ESMC model: {e}")
                 raise
 
-            # ==========================================================
-            # (3) 后续逻辑保持不动
-            # ==========================================================
+            # Compatibility fix: .config if it doesn't exist
             if not hasattr(self.model, "config"):
-                self.model.config = SimpleNamespace(use_return_dict=True,
-                                                    hidden_size=getattr(self.model, "hidden_size", 1024))
-                print("[SaProtBaseModel] Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
+                    self.model.config = {
+                        "use_return_dict": True,
+                        "hidden_size": getattr(self.model, "hidden_size", 1024)
+                    }
+                    print("Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
 
+            # Freeze backbone parameters if requested
             if self.freeze_backbone:
                 for p in self.model.parameters():
                     p.requires_grad = False
@@ -267,6 +269,7 @@ class SaprotBaseModel(AbstractModel):
             if hasattr(self.model, "encoder"):
                 self.model.encoder.gradient_checkpointing = self.gradient_checkpointing
 
+            # Wrap the forward method to adapt input arguments for compatibility
             if hasattr(self.model, "forward"):
                 old_forward = self.model.forward
 
@@ -289,10 +292,10 @@ class SaprotBaseModel(AbstractModel):
 
             print("[SaProtBaseModel] ESMC backbone initialized successfully.")
             return
+        # ==========================================================
+        # New branch end: detect and load EvolutionaryScale ESMC
+        # ==========================================================
 
-        # ==========================================================
-        # 1. Initialize tokenizer
-        # ==========================================================
         self.tokenizer = AutoTokenizer.from_pretrained(self.config_path)
             
         # Initialize different models according to task
