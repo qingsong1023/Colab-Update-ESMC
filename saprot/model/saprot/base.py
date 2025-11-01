@@ -204,173 +204,173 @@ class SaprotBaseModel(AbstractModel):
             # After LoRA model is initialized, add trainable parameters to optimizer)
             self.init_optimizers()
     
-def initialize_model(self):
-        """
-        Initialize backbone model according to base_model name (ESM2 / ESMC / ProtBert / etc).
-        """
-        # ==========================================================
-        # New branch: detect and load EvolutionaryScale ESMC
-        # ==========================================================
-        import os
-        # 导入 SimpleNamespace
-        from types import SimpleNamespace
-        
-        cfg_path = os.path.basename(str(getattr(self, "config_path", ""))).lower()
-        is_esmc_model = False
-
-        if cfg_path.startswith("esmc") or cfg_path.startswith("evolutionaryscale"):
-            is_esmc_model = True
-
-        if is_esmc_model:
-            print("Detected ESMC backbone: using EvolutionaryScale SDK loader.")
-
-             # Defensive patch: remove read-only attributes from EsmSequenceTokenizer
-            try:
-                import esm.tokenization.sequence_tokenizer as stn
-                tok_cls = getattr(stn, "EsmSequenceTokenizer", None)
-                for bad_attr in ["cls_token", "pad_token", "mask_token", "eos_token"]:
-                    try:
-                        if tok_cls and isinstance(getattr(tok_cls, bad_attr, None), property):
-                            delattr(tok_cls, bad_attr)
-                            print(f"[Patch Applied] Removed EsmSequenceTokenizer.{bad_attr} (read-only property).")
-                    except Exception as e:
-                        print(f"[Patch Skipped] {bad_attr}: {e}")
-            except Exception as e:
-                print("[Tokenizer Patch Warning]", e)
-
-            # Correct loading path (compatible with esm>=3.0)
-            from esm.models.esmc import ESMC
-            from esm.tokenization.sequence_tokenizer import EsmSequenceTokenizer
-            from esm.sdk.api import ESMProtein, LogitsConfig
+    def initialize_model(self):
+            """
+            Initialize backbone model according to base_model name (ESM2 / ESMC / ProtBert / etc).
+            """
+            # ==========================================================
+            # New branch: detect and load EvolutionaryScale ESMC
+            # ==========================================================
+            import os
+            # 导入 SimpleNamespace
+            from types import SimpleNamespace
             
-            try:
-                print("Loading ESMC backbone model (auto tokenizer)...")
-                self.model = ESMC.from_pretrained("esmc_300m")
-                self.tokenizer = self.model.tokenizer
-                print(f"Attached tokenizer: {type(self.tokenizer)}")
+            cfg_path = os.path.basename(str(getattr(self, "config_path", ""))).lower()
+            is_esmc_model = False
 
-            except Exception as e:
-                print(f"Failed to load ESMC model: {e}")
-                raise
+            if cfg_path.startswith("esmc") or cfg_path.startswith("evolutionaryscale"):
+                is_esmc_model = True
 
-            # Compatibility fix: .config if it doesn't exist
-            if not hasattr(self.model, "config"):
-                    # 使用 SimpleNamespace 而不是 dict
-                    self.model.config = SimpleNamespace(
-                        use_return_dict=True,
-                        hidden_size=getattr(self.model, "hidden_size", 1024)
-                    )
-                    print("Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
+            if is_esmc_model:
+                print("Detected ESMC backbone: using EvolutionaryScale SDK loader.")
 
-            # Freeze backbone parameters if requested
-            if self.freeze_backbone:
-                for p in self.model.parameters():
-                    p.requires_grad = False
+                # Defensive patch: remove read-only attributes from EsmSequenceTokenizer
+                try:
+                    import esm.tokenization.sequence_tokenizer as stn
+                    tok_cls = getattr(stn, "EsmSequenceTokenizer", None)
+                    for bad_attr in ["cls_token", "pad_token", "mask_token", "eos_token"]:
+                        try:
+                            if tok_cls and isinstance(getattr(tok_cls, bad_attr, None), property):
+                                delattr(tok_cls, bad_attr)
+                                print(f"[Patch Applied] Removed EsmSequenceTokenizer.{bad_attr} (read-only property).")
+                        except Exception as e:
+                            print(f"[Patch Skipped] {bad_attr}: {e}")
+                except Exception as e:
+                    print("[Tokenizer Patch Warning]", e)
 
-            self.esmc_api = {"ESMProtein": ESMProtein, "LogitsConfig": LogitsConfig}
+                # Correct loading path (compatible with esm>=3.0)
+                from esm.models.esmc import ESMC
+                from esm.tokenization.sequence_tokenizer import EsmSequenceTokenizer
+                from esm.sdk.api import ESMProtein, LogitsConfig
+                
+                try:
+                    print("Loading ESMC backbone model (auto tokenizer)...")
+                    self.model = ESMC.from_pretrained("esmc_300m")
+                    self.tokenizer = self.model.tokenizer
+                    print(f"Attached tokenizer: {type(self.tokenizer)}")
 
-            if hasattr(self.model, "encoder"):
-                self.model.encoder.gradient_checkpointing = self.gradient_checkpointing
+                except Exception as e:
+                    print(f"Failed to load ESMC model: {e}")
+                    raise
 
-            # Wrap the forward method to adapt input arguments for compatibility
-            if hasattr(self.model, "forward"):
-                old_forward = self.model.forward
+                # Compatibility fix: .config if it doesn't exist
+                if not hasattr(self.model, "config"):
+                        # 使用 SimpleNamespace 而不是 dict
+                        self.model.config = SimpleNamespace(
+                            use_return_dict=True,
+                            hidden_size=getattr(self.model, "hidden_size", 1024)
+                        )
+                        print("Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
 
-                def wrapped_forward(*args, **kwargs):
-                    if "input_ids" in kwargs:
-                        if "sequence_tokens" not in kwargs:
-                            kwargs["sequence_tokens"] = kwargs.pop("input_ids")
-                        else:
-                            kwargs.pop("input_ids")
-                    for k in [
-                        "attention_mask", "token_type_ids", "position_ids", "labels",
-                        "inputs_embeds", "past_key_values", "use_cache",
-                        "output_attentions", "output_hidden_states", "return_dict", "sequences",
-                    ]:
-                        kwargs.pop(k, None)
-                    return old_forward(*args, **kwargs)
+                # Freeze backbone parameters if requested
+                if self.freeze_backbone:
+                    for p in self.model.parameters():
+                        p.requires_grad = False
 
-                self.model.forward = wrapped_forward
-                print("[Patch] Installed ESMC.forward adapter at top level (cleaned kwargs only).")
+                self.esmc_api = {"ESMProtein": ESMProtein, "LogitsConfig": LogitsConfig}
 
-            print("[SaProtBaseModel] ESMC backbone initialized successfully.")
-            return
-        # ==========================================================
-        # New branch end: detect and load EvolutionaryScale ESMC
-        # ==========================================================
+                if hasattr(self.model, "encoder"):
+                    self.model.encoder.gradient_checkpointing = self.gradient_checkpointing
 
-        self.tokenizer = AutoTokenizer.from_pretrained(self.config_path)
-            
-        # Initialize different models according to task
-        config = AutoConfig.from_pretrained(self.config_path)
-        if self.extra_config:
-            for k, v in self.extra_config.items():
-                setattr(config, k, v)
-            
-        else:
-            self.extra_config = {}
-            
-        if self.task == 'classification':
-            # Note that self.num_labels should be set in child classes
-            if self.load_pretrained:
-                self.model = AutoModelForSequenceClassification.from_pretrained(
-                    self.config_path, num_labels=self.num_labels, **self.extra_config)
+                # Wrap the forward method to adapt input arguments for compatibility
+                if hasattr(self.model, "forward"):
+                    old_forward = self.model.forward
+
+                    def wrapped_forward(*args, **kwargs):
+                        if "input_ids" in kwargs:
+                            if "sequence_tokens" not in kwargs:
+                                kwargs["sequence_tokens"] = kwargs.pop("input_ids")
+                            else:
+                                kwargs.pop("input_ids")
+                        for k in [
+                            "attention_mask", "token_type_ids", "position_ids", "labels",
+                            "inputs_embeds", "past_key_values", "use_cache",
+                            "output_attentions", "output_hidden_states", "return_dict", "sequences",
+                        ]:
+                            kwargs.pop(k, None)
+                        return old_forward(*args, **kwargs)
+
+                    self.model.forward = wrapped_forward
+                    print("[Patch] Installed ESMC.forward adapter at top level (cleaned kwargs only).")
+
+                print("[SaProtBaseModel] ESMC backbone initialized successfully.")
+                return
+            # ==========================================================
+            # New branch end: detect and load EvolutionaryScale ESMC
+            # ==========================================================
+
+            self.tokenizer = AutoTokenizer.from_pretrained(self.config_path)
+                
+            # Initialize different models according to task
+            config = AutoConfig.from_pretrained(self.config_path)
+            if self.extra_config:
+                for k, v in self.extra_config.items():
+                    setattr(config, k, v)
                 
             else:
-                config.num_labels = self.num_labels
-                self.model = AutoModelForSequenceClassification.from_config(config)
-            
-        if self.task == 'token_classification':
-            # Note that self.num_labels should be set in child classes
-            if self.load_pretrained:
-                self.model = AutoModelForTokenClassification.from_pretrained(
-                    self.config_path, num_labels=self.num_labels, **self.extra_config)
+                self.extra_config = {}
                 
-            else:
-                config.num_labels = self.num_labels
-                self.model = AutoModelForTokenClassification.from_config(config)
-            
-        elif self.task == 'regression':
-            if self.load_pretrained:
-                self.model = AutoModelForSequenceClassification.from_pretrained(
-                    self.config_path, num_labels=1, **self.extra_config)
+            if self.task == 'classification':
+                # Note that self.num_labels should be set in child classes
+                if self.load_pretrained:
+                    self.model = AutoModelForSequenceClassification.from_pretrained(
+                        self.config_path, num_labels=self.num_labels, **self.extra_config)
+                    
+                else:
+                    config.num_labels = self.num_labels
+                    self.model = AutoModelForSequenceClassification.from_config(config)
                 
-            else:
-                config.num_labels = 1
-                self.model = AutoModelForSequenceClassification.from_config(config)
-            
-        elif self.task == 'lm':
-            if self.load_pretrained:
-                self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
+            if self.task == 'token_classification':
+                # Note that self.num_labels should be set in child classes
+                if self.load_pretrained:
+                    self.model = AutoModelForTokenClassification.from_pretrained(
+                        self.config_path, num_labels=self.num_labels, **self.extra_config)
+                    
+                else:
+                    config.num_labels = self.num_labels
+                    self.model = AutoModelForTokenClassification.from_config(config)
                 
-            else:
-                self.model = AutoModelForMaskedLM.from_config(config)
-            
-        elif self.task == 'base':
-            if self.load_pretrained:
-                self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
+            elif self.task == 'regression':
+                if self.load_pretrained:
+                    self.model = AutoModelForSequenceClassification.from_pretrained(
+                        self.config_path, num_labels=1, **self.extra_config)
+                    
+                else:
+                    config.num_labels = 1
+                    self.model = AutoModelForSequenceClassification.from_config(config)
                 
-            else:
-                self.model = AutoModelForMaskedLM.from_config(config)
+            elif self.task == 'lm':
+                if self.load_pretrained:
+                    self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
+                    
+                else:
+                    self.model = AutoModelForMaskedLM.from_config(config)
+                
+            elif self.task == 'base':
+                if self.load_pretrained:
+                    self.model = AutoModelForMaskedLM.from_pretrained(self.config_path, **self.extra_config)
+                    
+                else:
+                    self.model = AutoModelForMaskedLM.from_config(config)
+                    
+                if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
+                    self.model.lm_head = None
                 
             if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
-                self.model.lm_head = None
-            
-        if isinstance(self.model, EsmForMaskedLM) or isinstance(self.model, EsmForSequenceClassification):
-            # Remove contact head
-            self.model.esm.contact_head = None
+                # Remove contact head
+                self.model.esm.contact_head = None
+                    
+                # Remove position embedding if the embedding type is ``rotary``
+                if config.position_embedding_type == "rotary":
+                    self.model.esm.embeddings.position_embeddings = None
+                    
+                # Set gradient checkpointing
+                self.model.esm.encoder.gradient_checkpointing = self.gradient_checkpointing
                 
-            # Remove position embedding if the embedding type is ``rotary``
-            if config.position_embedding_type == "rotary":
-                self.model.esm.embeddings.position_embeddings = None
-                
-            # Set gradient checkpointing
-            self.model.esm.encoder.gradient_checkpointing = self.gradient_checkpointing
-            
-        # Freeze the backbone of the model
-        if self.freeze_backbone:
-            for param in self.model.esm.parameters():
-                param.requires_grad = False
+            # Freeze the backbone of the model
+            if self.freeze_backbone:
+                for param in self.model.esm.parameters():
+                    param.requires_grad = False
         
         # # Disable the pooling layer
         # backbone = getattr(self.model, "esm", self.model.bert)
