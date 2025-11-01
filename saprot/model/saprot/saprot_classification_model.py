@@ -89,6 +89,12 @@ class SaprotClassificationModel(SaprotBaseModel):
                 logits = outputs.get("logits", list(outputs.values())[0])
             elif hasattr(outputs, "logits"):
                 logits = outputs.logits
+            # ======================= MODIFICATION START =======================
+            # Add this condition to correctly handle the output object from ESMC models.
+            # This ensures `logits` is a tensor before the `.ndim` check.
+            elif hasattr(outputs, "sequence_logits"):
+                logits = outputs.sequence_logits
+            # ======================== MODIFICATION END ========================
             else:
                 logits = outputs
         
