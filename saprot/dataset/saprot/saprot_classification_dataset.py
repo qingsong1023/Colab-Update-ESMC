@@ -108,10 +108,12 @@ class SaprotClassificationDataset(LMDBDataset):
         labels = {"labels": label_ids}
     
         if self.tokenizer is None:
-            inputs = {"inputs": {"sequences": list(seqs)}}
+            cleaned_seqs = [s.replace(" ", "") for s in seqs]
+            inputs = {"inputs": {"sequences": cleaned_seqs}}
         else:
-            encoder_info = self.tokenizer.batch_encode_plus(seqs, return_tensors='pt', padding=True)
+            encoder_info = self.tokenizer.batch_encode_plus(list(seqs), return_tensors='pt', padding=True)
             inputs = {"inputs": encoder_info}
+
         if self.use_bias_feature:
             inputs["coords"] = coords
 
