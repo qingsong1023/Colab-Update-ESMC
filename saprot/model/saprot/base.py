@@ -96,7 +96,6 @@ class SaprotBaseModel(AbstractModel):
                 is_esmc_model = True
 
             if is_esmc_model:
-                print("[LoRA::ESMC] Detected ESMC backbone using external lora_esmc_adapter.")
                 try:
                     from .self_peft.lora_esmc_adapter import apply_lora_to_esmc
                     self.model = apply_lora_to_esmc(
@@ -106,9 +105,9 @@ class SaprotBaseModel(AbstractModel):
                         is_trainable=is_trainable,
                         config_list=config_list,
                     )
-                    print("[LoRA::ESMC] Successfully applied ESMC LoRA adapter.")
+                    print("Successfully applied ESMC LoRA adapter.")
                 except Exception as e:
-                    print(f"[LoRA::ESMC] Failed to apply ESMC external LoRA: {e}")
+                    print(f"Failed to apply ESMC external LoRA: {e}")
                     raise
                 # After LoRA model is initialized, add trainable parameters to optimizer)
                 self.init_optimizers()
@@ -212,8 +211,6 @@ class SaprotBaseModel(AbstractModel):
             # New branch: detect and load EvolutionaryScale ESMC
             # ==========================================================
             import os
-            # 导入 SimpleNamespace
-            from types import SimpleNamespace
             
             cfg_path = os.path.basename(str(getattr(self, "config_path", ""))).lower()
             is_esmc_model = False
@@ -255,11 +252,14 @@ class SaprotBaseModel(AbstractModel):
 
                 # Compatibility fix: .config if it doesn't exist
                 if not hasattr(self.model, "config"):
-                        # 使用 SimpleNamespace 而不是 dict
-                        self.model.config = SimpleNamespace(
-                            use_return_dict=True,
-                            hidden_size=getattr(self.model, "hidden_size", 1024)
-                        )
+                        # ==================== [核心修改] ====================
+                        # 将 SimpleNamespace 改为字典 (dict)，并添加 peft 需要的 _name_or_path 键
+                        self.model.config = {
+                            "_name_or_path": self.config_path,  # 添加这个关键的键
+                            "use_return_dict": True,
+                            "hidden_size": getattr(self.model, "hidden_size", 1024)
+                        }
+                        # ===================================================
                         print("Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
 
                 # Freeze backbone parameters if requested

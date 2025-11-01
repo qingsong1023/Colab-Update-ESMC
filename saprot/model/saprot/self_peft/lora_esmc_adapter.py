@@ -10,10 +10,10 @@ def apply_lora_to_esmc(model, lora_kwargs, num_lora=1, is_trainable=False, confi
     """
     Apply LoRA to ESMC backbone (EvolutionaryScale models).
     """
-    print("[lora_esmc_adapter] Injecting LoRA into ESMC model...")
+    print("Injecting LoRA into ESMC model...")
 
     target_modules = ["q_proj", "k_proj", "v_proj", "out_proj", "fc1", "fc2", "mlp"]
-    
+
     r = getattr(lora_kwargs, "r", 8)
     lora_dropout = getattr(lora_kwargs, "lora_dropout", 0.1)
     lora_alpha = getattr(lora_kwargs, "lora_alpha", 16)
@@ -31,7 +31,7 @@ def apply_lora_to_esmc(model, lora_kwargs, num_lora=1, is_trainable=False, confi
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
-    print("[lora_esmc_adapter] LoRA successfully applied to ESMC backbone.")
+    print("LoRA successfully applied to ESMC backbone.")
     return model
 
 

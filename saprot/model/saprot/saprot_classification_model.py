@@ -72,7 +72,7 @@ class SaprotClassificationModel(SaprotBaseModel):
                     elif isinstance(seq_obj, torch.Tensor):
                         esmc_kwargs["sequence_tokens"] = seq_obj
                     else:
-                        raise TypeError(f"[SaProtClassificationModel] Unexpected type under 'sequences': {type(seq_obj)}")
+                        raise TypeError(f"Unexpected type under 'sequences': {type(seq_obj)}")
 
                 # ---- STEP 2.2: Unify input field names
                 # ESMC models expect 'sequence_tokens' instead of 'input_ids'.
@@ -80,7 +80,7 @@ class SaprotClassificationModel(SaprotBaseModel):
                     esmc_kwargs["sequence_tokens"] = esmc_kwargs.pop("input_ids")
                 elif "sequence_tokens" not in esmc_kwargs:
                     raise ValueError(
-                        "[SaProtClassificationModel] ESMC forward requires tokenized tensors "
+                        "ESMC forward requires tokenized tensors "
                         "under 'input_ids' or 'sequence_tokens'."
                     )
                 
@@ -89,7 +89,7 @@ class SaprotClassificationModel(SaprotBaseModel):
                 if "attention_mask" in esmc_kwargs:
                     esmc_kwargs.pop("attention_mask")
                 outputs = self.model(**esmc_kwargs)
-                
+
             # =========================================================================
             # END
             # =========================================================================
@@ -118,11 +118,11 @@ class SaprotClassificationModel(SaprotBaseModel):
                 elif "sequence_logits" in logits:
                     logits = logits["sequence_logits"]
                 else:
-                    raise TypeError(f"[SaProtClassificationModel] logits dict has no proper key: {logits.keys()}")
+                    raise TypeError(f"logits dict has no proper key: {logits.keys()}")
             elif hasattr(logits, "__getitem__"):
                 logits = logits[0]
             else:
-                raise TypeError(f"[SaProtClassificationModel] logits must be Tensor, got {type(logits)}")
+                raise TypeError(f"logits must be Tensor, got {type(logits)}")
         label = labels["labels"]
 
         # Automatic aggregation for token-level outputs such as ESMC
