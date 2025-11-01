@@ -254,11 +254,12 @@ class SaprotBaseModel(AbstractModel):
                 if not hasattr(self.model, "config"):
                         # ==================== [核心修改] ====================
                         # 将 SimpleNamespace 改为字典 (dict)，并添加 peft 需要的 _name_or_path 键
-                        self.model.config = {
-                            "_name_or_path": self.config_path,  # 添加这个关键的键
+                        from easydict import EasyDict
+                        self.model.config = EasyDict ({
+                            "_name_or_path": self.config_path,
                             "use_return_dict": True,
                             "hidden_size": getattr(self.model, "hidden_size", 1024)
-                        }
+                        })
                         # ===================================================
                         print("Added dummy `.config` for ESMC (for PEFT / LoRA compatibility).")
 
