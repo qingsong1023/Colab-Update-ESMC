@@ -181,7 +181,6 @@ def load_trainer(config):
         trainer_config.logger = False
 
     if "precision" in trainer_config:
-        print(f"[DEBUG] Removing old precision={trainer_config['precision']} from Trainer config")
         trainer_config.pop("precision")
 
     # Initialize strategy

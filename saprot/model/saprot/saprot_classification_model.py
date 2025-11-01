@@ -38,14 +38,10 @@ class SaprotClassificationModel(SaprotBaseModel):
             # =========================================================================
             # START
             # =========================================================================
-
-            # Step 1: Unwrap the model to find the actual base model type.
-            # This logic runs for all models to ensure we always identify the correct architecture.
             model_ref = self.model
             unwrap_depth = 0
             while hasattr(model_ref, "base_model") or hasattr(model_ref, "model"):
                 unwrap_depth += 1
-                cls_name = model_ref.__class__.__name__
                 if hasattr(model_ref, "base_model"):
                     model_ref = model_ref.base_model
                 elif hasattr(model_ref, "model"):
@@ -55,13 +51,10 @@ class SaprotClassificationModel(SaprotBaseModel):
                 if unwrap_depth > 50:
                     break
             
-            # After unwrapping, model_ref points to the innermost (base) model.
             base_model_name = model_ref.__class__.__name__.lower()
 
-            # Step 2: Prepare inputs and forward call based on the resolved base model.
             if any(k in base_model_name for k in ["esmc", "evolutionaryscale"]):
                 esmc_kwargs = inputs.copy()
-                # ---- STEP 2.1: Backward compatibility for 'sequences' key
                 seq_obj = esmc_kwargs.get("sequences", None)
                 if seq_obj is not None and "input_ids" not in esmc_kwargs and "sequence_tokens" not in esmc_kwargs:
                     if isinstance(seq_obj, (list, tuple)) and len(seq_obj) > 0 and isinstance(seq_obj[0], str):
@@ -74,8 +67,6 @@ class SaprotClassificationModel(SaprotBaseModel):
                     else:
                         raise TypeError(f"Unexpected type under 'sequences': {type(seq_obj)}")
 
-                # ---- STEP 2.2: Unify input field names
-                # ESMC models expect 'sequence_tokens' instead of 'input_ids'.
                 if "input_ids" in esmc_kwargs:
                     esmc_kwargs["sequence_tokens"] = esmc_kwargs.pop("input_ids")
                 elif "sequence_tokens" not in esmc_kwargs:
@@ -84,16 +75,13 @@ class SaprotClassificationModel(SaprotBaseModel):
                         "under 'input_ids' or 'sequence_tokens'."
                     )
                 
-                # ---- STEP 2.3: Remove unsupported arguments
-                # The base ESMC model forward() does not accept 'attention_mask'.
                 if "attention_mask" in esmc_kwargs:
                     esmc_kwargs.pop("attention_mask")
                 outputs = self.model(**esmc_kwargs)
-
             # =========================================================================
             # END
             # =========================================================================
-
+            
             else:
                 outputs = self.model(**inputs)
 
@@ -103,7 +91,10 @@ class SaprotClassificationModel(SaprotBaseModel):
                 logits = outputs.logits
             else:
                 logits = outputs
-                
+        
+        # Check if the output is per-residue (3 dimensions: Batch, Sequence, Labels)
+        if logits.ndim == 3:
+            logits = logits.mean(dim=1)   
         return logits
 
     def loss_func(self, stage, logits, labels):
@@ -126,8 +117,6 @@ class SaprotClassificationModel(SaprotBaseModel):
         label = labels["labels"]
 
         # Automatic aggregation for token-level outputs such as ESMC
-        if logits.ndim == 3:
-            logits = logits.mean(dim=1)
         if label.ndim > 1:
             label = label.squeeze(-1)
 
