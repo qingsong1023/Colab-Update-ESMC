@@ -22,9 +22,6 @@ class SaprotClassificationModel(SaprotBaseModel):
         return {f"{stage}_acc": torchmetrics.Accuracy()}
 
     def forward(self, inputs, coords=None):
-        # =========================================================================
-        # 这部分代码完全按照你的要求保持不变
-        # =========================================================================
         if coords is not None:
             inputs = self.add_bias_feature(inputs, coords)
 
@@ -39,19 +36,16 @@ class SaprotClassificationModel(SaprotBaseModel):
 
         else:
             # =========================================================================
-            # START: 核心修改区域
-            # 我们将用下面的智能逻辑替换原来简单的 `outputs = self.model(**inputs)`
+            # START
             # =========================================================================
 
-            # Step 1: 统一解包模型，找到真正的基础模型类型
-            # 这个逻辑对所有模型都运行，以确保我们总是基于基础架构进行判断。
-            print("[DEBUG] ===== Start unwrapping model =====")
+            # Step 1: Unwrap the model to find the actual base model type.
+            # This logic runs for all models to ensure we always identify the correct architecture.
             model_ref = self.model
             unwrap_depth = 0
             while hasattr(model_ref, "base_model") or hasattr(model_ref, "model"):
                 unwrap_depth += 1
                 cls_name = model_ref.__class__.__name__
-                print(f"[DEBUG] Unwrapped level {unwrap_depth}: {cls_name}")
                 if hasattr(model_ref, "base_model"):
                     model_ref = model_ref.base_model
                 elif hasattr(model_ref, "model"):
@@ -59,23 +53,15 @@ class SaprotClassificationModel(SaprotBaseModel):
                 else:
                     break
                 if unwrap_depth > 50:
-                    print(f"[DEBUG] WARNING: unwrap depth > 50, may indicate recursive model structure!")
                     break
             
-            # 解包循环结束后，model_ref 是最内层的模型。获取其类名。
+            # After unwrapping, model_ref points to the innermost (base) model.
             base_model_name = model_ref.__class__.__name__.lower()
-            print(f"[DEBUG] Final resolved model class: {base_model_name}")
-            print("[DEBUG] ===== End unwrapping model =====")
 
-            # Step 2: 根据解析出的基础模型类名，准备输入并调用模型
+            # Step 2: Prepare inputs and forward call based on the resolved base model.
             if any(k in base_model_name for k in ["esmc", "evolutionaryscale"]):
-                # --- ESMC 模型特殊处理路径 ---
-                print("[DEBUG] ESMC forward path selected.")
-                
-                # 创建一个干净的参数字典，以避免向底层模型传递冲突或不支持的参数。
                 esmc_kwargs = inputs.copy()
-
-                # ---- STEP 2.1: 向后兼容 'sequences' 键 (来自你的原始代码)
+                # ---- STEP 2.1: Backward compatibility for 'sequences' key
                 seq_obj = esmc_kwargs.get("sequences", None)
                 if seq_obj is not None and "input_ids" not in esmc_kwargs and "sequence_tokens" not in esmc_kwargs:
                     if isinstance(seq_obj, (list, tuple)) and len(seq_obj) > 0 and isinstance(seq_obj[0], str):
@@ -88,11 +74,9 @@ class SaprotClassificationModel(SaprotBaseModel):
                     else:
                         raise TypeError(f"[SaProtClassificationModel] Unexpected type under 'sequences': {type(seq_obj)}")
 
-                # ---- STEP 2.2: 统一输入字段名，这是修复 TypeError 的关键
-                # ESMC 模型期望 'sequence_tokens' 而不是 'input_ids'。
-                # 我们使用 .pop() 来获取值并移除旧键，从而避免参数冲突。
+                # ---- STEP 2.2: Unify input field names
+                # ESMC models expect 'sequence_tokens' instead of 'input_ids'.
                 if "input_ids" in esmc_kwargs:
-                    print("[DEBUG] Renaming 'input_ids' to 'sequence_tokens' for ESMC.")
                     esmc_kwargs["sequence_tokens"] = esmc_kwargs.pop("input_ids")
                 elif "sequence_tokens" not in esmc_kwargs:
                     raise ValueError(
@@ -100,31 +84,19 @@ class SaprotClassificationModel(SaprotBaseModel):
                         "under 'input_ids' or 'sequence_tokens'."
                     )
                 
-                # ---- STEP 2.3: 移除 ESMC 不支持的参数
-                # 基础 ESMC 模型的 forward 方法不接受 'attention_mask'。
-                # PEFT/LoRA 包装器知道如何处理这种情况，但我们不应将此参数传递给最底层。
+                # ---- STEP 2.3: Remove unsupported arguments
+                # The base ESMC model forward() does not accept 'attention_mask'.
                 if "attention_mask" in esmc_kwargs:
-                    print("[DEBUG] Removing 'attention_mask' for ESMC call.")
                     esmc_kwargs.pop("attention_mask")
-
-                # 使用为 ESMC精心准备的、干净的参数字典来调用模型。
                 outputs = self.model(**esmc_kwargs)
+                
+            # =========================================================================
+            # END
+            # =========================================================================
 
             else:
-                # --- 标准 Hugging Face 模型路径 (例如 EsmForSequenceClassification, ProtBertForSequenceClassification 等) ---
-                print("[DEBUG] Standard Hugging Face model forward path selected.")
-                
-                # 这些模型期望标准的 'input_ids', 'attention_mask' 等。
-                # 原始的 'inputs' 字典已经是正确的格式。
                 outputs = self.model(**inputs)
 
-            # =========================================================================
-            # END: 核心修改区域
-            # =========================================================================
-
-            # =========================================================================
-            # 这部分代码完全按照你的要求保持不变，它现在处理上面逻辑块生成的 `outputs`
-            # =========================================================================
             if isinstance(outputs, dict):
                 logits = outputs.get("logits", list(outputs.values())[0])
             elif hasattr(outputs, "logits"):
